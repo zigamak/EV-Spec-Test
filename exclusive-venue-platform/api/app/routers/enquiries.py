@@ -1,0 +1,281 @@
+"""Enquiry intake CRUD (task C1): organisations, contacts, enquiries.
+
+Same RLS-scoped pattern as venues.py — every handler runs against the
+caller's own JWT (app/core/scoped_client.py); Postgres RLS decides what
+each request can actually see or write. Public/anon intake (C2/C4) is a
+separate, unauthenticated write path (Supabase service role, bypassing
+RLS) — not part of this staff-only router.
+"""
+
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from postgrest.exceptions import APIError
+from pydantic import BaseModel
+from supabase import Client
+
+from app.core.auth import StaffUser, require_staff_session
+from app.core.scoped_client import get_scoped_client
+from app.schemas.enquiry import (
+    Contact,
+    ContactCreate,
+    ContactUpdate,
+    Enquiry,
+    EnquiryCreate,
+    EnquiryStage,
+    EnquiryUpdate,
+    Organisation,
+    OrganisationCreate,
+    OrganisationUpdate,
+)
+from app.services.stage_machine import InvalidTransition, validate_transition
+
+router = APIRouter(tags=["enquiries"])
+
+ScopedClient = Annotated[Client, Depends(get_scoped_client)]
+Staff = Annotated[StaffUser, Depends(require_staff_session)]
+
+
+def _raise_for_postgrest(exc: APIError) -> None:
+    code = (exc.code or "").upper()
+    if code in {"42501", "PGRST301"}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, exc.message) from exc
+    if code == "23505":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Already exists") from exc
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, exc.message) from exc
+
+
+# --- organisations ---------------------------------------------------------
+
+
+@router.get("/organisations", response_model=list[Organisation])
+def list_organisations(client: ScopedClient, _: Staff, search: str | None = None):
+    query = client.table("organisations").select("*").order("name")
+    if search:
+        query = query.ilike("name", f"%{search}%")
+    try:
+        result = query.execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return result.data
+
+
+@router.post("/organisations", response_model=Organisation, status_code=status.HTTP_201_CREATED)
+def create_organisation(payload: OrganisationCreate, client: ScopedClient, _: Staff):
+    body = payload.model_dump(mode="json", exclude_none=True)
+    try:
+        result = client.table("organisations").insert(body).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return result.data[0]
+
+
+@router.get("/organisations/{organisation_id}", response_model=Organisation)
+def get_organisation(organisation_id: UUID, client: ScopedClient, _: Staff):
+    try:
+        result = (
+            client.table("organisations").select("*").eq("id", str(organisation_id)).execute()
+        )
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Organisation not found")
+    return result.data[0]
+
+
+@router.patch("/organisations/{organisation_id}", response_model=Organisation)
+def update_organisation(
+    organisation_id: UUID, payload: OrganisationUpdate, client: ScopedClient, _: Staff
+):
+    body = payload.model_dump(mode="json", exclude_none=True)
+    if not body:
+        return get_organisation(organisation_id, client, _)
+    try:
+        result = (
+            client.table("organisations")
+            .update(body)
+            .eq("id", str(organisation_id))
+            .execute()
+        )
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Organisation not found")
+    return result.data[0]
+
+
+# --- contacts ----------------------------------------------------------
+
+
+@router.get("/contacts", response_model=list[Contact])
+def list_contacts(client: ScopedClient, _: Staff, search: str | None = None):
+    query = client.table("contacts").select("*").order("created_at", desc=True)
+    if search:
+        query = query.or_(f"full_name.ilike.%{search}%,email.ilike.%{search}%")
+    try:
+        result = query.execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return result.data
+
+
+@router.post("/contacts", response_model=Contact, status_code=status.HTTP_201_CREATED)
+def create_contact(payload: ContactCreate, client: ScopedClient, _: Staff):
+    body = payload.model_dump(mode="json", exclude_none=True)
+    try:
+        result = client.table("contacts").insert(body).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return result.data[0]
+
+
+@router.get("/contacts/{contact_id}", response_model=Contact)
+def get_contact(contact_id: UUID, client: ScopedClient, _: Staff):
+    try:
+        result = client.table("contacts").select("*").eq("id", str(contact_id)).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact not found")
+    return result.data[0]
+
+
+@router.patch("/contacts/{contact_id}", response_model=Contact)
+def update_contact(contact_id: UUID, payload: ContactUpdate, client: ScopedClient, _: Staff):
+    body = payload.model_dump(mode="json", exclude_none=True)
+    if not body:
+        return get_contact(contact_id, client, _)
+    try:
+        result = client.table("contacts").update(body).eq("id", str(contact_id)).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact not found")
+    return result.data[0]
+
+
+# --- enquiries -----------------------------------------------------------
+
+
+@router.get("/enquiries", response_model=list[Enquiry])
+def list_enquiries(
+    client: ScopedClient,
+    _: Staff,
+    stage: EnquiryStage | None = None,
+    assigned_to: UUID | None = None,
+):
+    query = client.table("enquiries").select("*").order("created_at", desc=True)
+    if stage:
+        query = query.eq("stage", stage)
+    if assigned_to:
+        query = query.eq("assigned_to", str(assigned_to))
+    try:
+        result = query.execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return result.data
+
+
+@router.post("/enquiries", response_model=Enquiry, status_code=status.HTTP_201_CREATED)
+def create_enquiry(payload: EnquiryCreate, client: ScopedClient, staff: Staff):
+    # Staff-entered enquiries (manual entry, C3) always carry created_by;
+    # anonymous intake (C2/C4) is a separate service-role write path with
+    # created_by left null (erd.md §5) and never reaches this handler.
+    body = {
+        **payload.model_dump(mode="json", exclude_none=True),
+        "created_by": staff.user_id,
+    }
+    try:
+        result = client.table("enquiries").insert(body).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return result.data[0]
+
+
+def _get_enquiry_or_404(client: Client, enquiry_id: UUID) -> dict:
+    try:
+        result = client.table("enquiries").select("*").eq("id", str(enquiry_id)).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Enquiry not found")
+    return result.data[0]
+
+
+@router.get("/enquiries/{enquiry_id}", response_model=Enquiry)
+def get_enquiry(enquiry_id: UUID, client: ScopedClient, _: Staff):
+    return _get_enquiry_or_404(client, enquiry_id)
+
+
+@router.patch("/enquiries/{enquiry_id}", response_model=Enquiry)
+def update_enquiry(enquiry_id: UUID, payload: EnquiryUpdate, client: ScopedClient, _: Staff):
+    body = payload.model_dump(mode="json", exclude_none=True)
+    if not body:
+        return _get_enquiry_or_404(client, enquiry_id)
+    try:
+        result = client.table("enquiries").update(body).eq("id", str(enquiry_id)).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Enquiry not found")
+    return result.data[0]
+
+
+class StageTransitionRequest(BaseModel):
+    stage: EnquiryStage
+    lost_reason: str | None = None
+
+
+class AssignmentRequest(BaseModel):
+    assigned_to: UUID | None = None
+
+
+@router.post("/enquiries/{enquiry_id}/transition", response_model=Enquiry)
+def transition_enquiry(
+    enquiry_id: UUID, payload: StageTransitionRequest, client: ScopedClient, _: Staff
+):
+    """Task H1's stage machine. The only sanctioned way to move an
+    enquiry's stage — validated against ALLOWED_TRANSITIONS before ever
+    reaching Postgres, so an invalid jump (e.g. new -> confirmed) is
+    rejected here with a clear 409, not a confusing CHECK-constraint
+    error from the DB."""
+    current = _get_enquiry_or_404(client, enquiry_id)
+    try:
+        validate_transition(current["stage"], payload.stage)
+    except InvalidTransition as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    if payload.stage == "lost" and not payload.lost_reason:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "lost_reason is required when moving to 'lost'"
+        )
+
+    body = {"stage": payload.stage}
+    if payload.lost_reason:
+        body["lost_reason"] = payload.lost_reason
+
+    try:
+        result = client.table("enquiries").update(body).eq("id", str(enquiry_id)).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Enquiry not found")
+    return result.data[0]
+
+
+@router.post("/enquiries/{enquiry_id}/assign", response_model=Enquiry)
+def assign_enquiry(enquiry_id: UUID, payload: AssignmentRequest, client: ScopedClient, _: Staff):
+    body = {"assigned_to": str(payload.assigned_to) if payload.assigned_to else None}
+    try:
+        result = (
+            client.table("enquiries")
+            .update(body)
+            .eq("id", str(enquiry_id))
+            .execute()
+        )
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Enquiry not found")
+    return result.data[0]

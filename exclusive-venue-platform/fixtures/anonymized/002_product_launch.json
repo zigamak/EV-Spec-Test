@@ -1,0 +1,11 @@
+{
+  "raw_content": "Enquiry from web form. Name: Priya Sharma. Company: Nova Beauty Group. Message: Launching a new skincare line, need a venue for ~150 people, sometime in late April or early May 2027 (flexible on exact date). Budget around HK$3,500 per head. Prefer a modern, minimalist space, no strict district preference. Duration about 3 hours including a press segment.",
+  "expected": {
+    "event_date_flexible": true,
+    "guest_count": 150,
+    "event_type": "product launch",
+    "budget_amount": 3500,
+    "budget_basis": "per_head",
+    "duration_hours": 3
+  }
+}

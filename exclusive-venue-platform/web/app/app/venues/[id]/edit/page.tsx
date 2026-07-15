@@ -1,0 +1,580 @@
+"use client";
+
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch, ApiError } from "@/lib/api/client";
+import PricingRulesTab from "./PricingRulesTab";
+import {
+  RESTRICTION_KINDS,
+  type MediaKind,
+  type RestrictionKind,
+  type Venue,
+  type VenueConfiguration,
+  type VenueConfigurationCreate,
+  type VenueMedia,
+  type VenueRestriction,
+  type VenueRestrictionCreate,
+  type VenueUpdate,
+} from "@/lib/api/types";
+
+const MEDIA_KINDS: MediaKind[] = ["photo", "video", "floor_plan"];
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "var(--space-2)",
+  border: "1px solid var(--color-border)",
+  borderRadius: "var(--radius-sm)",
+  font: "inherit",
+};
+
+const labelStyle: React.CSSProperties = {
+  display: "block",
+  marginBottom: "var(--space-1)",
+  fontSize: "0.85rem",
+  color: "var(--color-text-secondary)",
+};
+
+const smallButtonStyle: React.CSSProperties = {
+  padding: "var(--space-1) var(--space-3)",
+  border: "1px solid var(--color-border)",
+  borderRadius: "var(--radius-sm)",
+  background: "var(--color-bg)",
+  cursor: "pointer",
+};
+
+/** Venue edit form (task B4): venue fields + configurations + restrictions.
+ * Media upload/reorder is B5; availability calendar is B6/J2 — neither
+ * lives here. */
+export default function EditVenuePage() {
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const venueId = params.id;
+
+  const [venue, setVenue] = useState<Venue | null>(null);
+  const [configurations, setConfigurations] = useState<VenueConfiguration[]>([]);
+  const [restrictions, setRestrictions] = useState<VenueRestriction[]>([]);
+  const [media, setMedia] = useState<VenueMedia[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [venueData, configData, restrictionData, mediaData] = await Promise.all([
+        apiFetch<Venue>(`/venues/${venueId}`),
+        apiFetch<VenueConfiguration[]>(`/venues/${venueId}/configurations`),
+        apiFetch<VenueRestriction[]>(`/venues/${venueId}/restrictions`),
+        apiFetch<VenueMedia[]>(`/venues/${venueId}/media`),
+      ]);
+      setVenue(venueData);
+      setConfigurations(configData);
+      setRestrictions(restrictionData);
+      setMedia(mediaData.sort((a, b) => a.sort_order - b.sort_order));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to load venue");
+    }
+  }, [venueId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!venue) return;
+    setError(null);
+    setSaving(true);
+    const payload: VenueUpdate = {
+      name: venue.name.trim(),
+      slug: venue.slug.trim(),
+      description: venue.description?.trim() || null,
+      address: venue.address?.trim() || null,
+      district: venue.district?.trim() || null,
+    };
+    try {
+      await apiFetch<Venue>(`/venues/${venueId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      router.push(`/app/venues/${venueId}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save venue");
+      setSaving(false);
+    }
+  }
+
+  async function handleAddConfiguration(config: VenueConfigurationCreate) {
+    try {
+      const created = await apiFetch<VenueConfiguration>(`/venues/${venueId}/configurations`, {
+        method: "POST",
+        body: JSON.stringify(config),
+      });
+      setConfigurations((prev) => [...prev, created]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to add configuration");
+    }
+  }
+
+  async function handleDeleteConfiguration(configId: string) {
+    try {
+      await apiFetch(`/venues/${venueId}/configurations/${configId}`, { method: "DELETE" });
+      setConfigurations((prev) => prev.filter((c) => c.id !== configId));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to remove configuration");
+    }
+  }
+
+  async function handleUploadMedia(file: File, kind: MediaKind, caption: string) {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("kind", kind);
+    form.append("sort_order", String(media.length));
+    if (caption.trim()) form.append("caption", caption.trim());
+    try {
+      const created = await apiFetch<VenueMedia>(`/venues/${venueId}/media`, {
+        method: "POST",
+        body: form,
+      });
+      setMedia((prev) => [...prev, created]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to upload media");
+    }
+  }
+
+  async function handleDeleteMedia(mediaId: string) {
+    try {
+      await apiFetch(`/venues/${venueId}/media/${mediaId}`, { method: "DELETE" });
+      setMedia((prev) => prev.filter((m) => m.id !== mediaId));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to remove media");
+    }
+  }
+
+  async function handleMoveMedia(mediaId: string, direction: -1 | 1) {
+    const index = media.findIndex((m) => m.id === mediaId);
+    const swapIndex = index + direction;
+    if (index < 0 || swapIndex < 0 || swapIndex >= media.length) return;
+
+    const current = media[index];
+    const swapWith = media[swapIndex];
+    if (!current || !swapWith) return;
+    const reordered = [...media];
+    reordered[index] = swapWith;
+    reordered[swapIndex] = current;
+    setMedia(reordered);
+
+    try {
+      await Promise.all([
+        apiFetch(`/venues/${venueId}/media/${current.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ sort_order: swapIndex }),
+        }),
+        apiFetch(`/venues/${venueId}/media/${swapWith.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ sort_order: index }),
+        }),
+      ]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to reorder media");
+      load();
+    }
+  }
+
+  async function handleAddRestriction(restriction: VenueRestrictionCreate) {
+    try {
+      const created = await apiFetch<VenueRestriction>(`/venues/${venueId}/restrictions`, {
+        method: "POST",
+        body: JSON.stringify(restriction),
+      });
+      setRestrictions((prev) => [...prev, created]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to add restriction");
+    }
+  }
+
+  async function handleDeleteRestriction(restrictionId: string) {
+    try {
+      await apiFetch(`/venues/${venueId}/restrictions/${restrictionId}`, { method: "DELETE" });
+      setRestrictions((prev) => prev.filter((r) => r.id !== restrictionId));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to remove restriction");
+    }
+  }
+
+  if (!venue) {
+    return (
+      <main style={{ padding: "var(--space-8)" }}>
+        <p style={{ color: error ? "var(--color-danger)" : "var(--color-text-muted)" }}>
+          {error ?? "Loading…"}
+        </p>
+      </main>
+    );
+  }
+
+  return (
+    <main style={{ padding: "var(--space-8)", maxWidth: "640px", margin: "0 auto" }}>
+      <Link href={`/app/venues/${venueId}`} style={{ color: "var(--color-text-secondary)" }}>
+        ← {venue.name}
+      </Link>
+
+      <h1 style={{ marginTop: "var(--space-4)" }}>Edit venue</h1>
+
+      <form
+        onSubmit={handleSave}
+        style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)", marginTop: "var(--space-6)" }}
+      >
+        <div>
+          <label style={labelStyle} htmlFor="name">
+            Name
+          </label>
+          <input
+            id="name"
+            style={inputStyle}
+            value={venue.name}
+            onChange={(e) => setVenue({ ...venue, name: e.target.value })}
+            required
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle} htmlFor="slug">
+            Slug
+          </label>
+          <input
+            id="slug"
+            style={inputStyle}
+            value={venue.slug}
+            onChange={(e) => setVenue({ ...venue, slug: e.target.value })}
+            pattern="^[a-z0-9]+(-[a-z0-9]+)*$"
+            required
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle} htmlFor="district">
+            District
+          </label>
+          <input
+            id="district"
+            style={inputStyle}
+            value={venue.district ?? ""}
+            onChange={(e) => setVenue({ ...venue, district: e.target.value })}
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle} htmlFor="address">
+            Address
+          </label>
+          <input
+            id="address"
+            style={inputStyle}
+            value={venue.address ?? ""}
+            onChange={(e) => setVenue({ ...venue, address: e.target.value })}
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle} htmlFor="description">
+            Description
+          </label>
+          <textarea
+            id="description"
+            style={{ ...inputStyle, minHeight: "120px", resize: "vertical" }}
+            value={venue.description ?? ""}
+            onChange={(e) => setVenue({ ...venue, description: e.target.value })}
+          />
+        </div>
+
+        {error && <p style={{ color: "var(--color-danger)", margin: 0 }}>{error}</p>}
+
+        <button
+          type="submit"
+          disabled={saving}
+          style={{
+            alignSelf: "flex-start",
+            padding: "var(--space-2) var(--space-5)",
+            background: "var(--color-accent)",
+            color: "#fff",
+            border: "none",
+            borderRadius: "var(--radius-sm)",
+            cursor: saving ? "default" : "pointer",
+          }}
+        >
+          {saving ? "Saving…" : "Save changes"}
+        </button>
+      </form>
+
+      <section style={{ marginTop: "var(--space-10)" }}>
+        <h2 style={{ fontSize: "1.1rem" }}>Media</h2>
+        {media.length === 0 ? (
+          <p style={{ color: "var(--color-text-muted)" }}>No photos, videos, or floor plans yet.</p>
+        ) : (
+          <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap", margin: "var(--space-3) 0" }}>
+            {media.map((m, i) => (
+              <div key={m.id} style={{ width: "160px" }}>
+                {m.kind === "photo" && m.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={m.url}
+                    alt={m.caption ?? ""}
+                    style={{
+                      width: "100%",
+                      height: "110px",
+                      objectFit: "cover",
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px solid var(--color-border)",
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: "100%",
+                      height: "110px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: "var(--color-surface)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: "var(--radius-sm)",
+                      color: "var(--color-text-muted)",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    {m.kind}
+                  </div>
+                )}
+                {m.caption && (
+                  <p style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)", margin: "var(--space-1) 0" }}>
+                    {m.caption}
+                  </p>
+                )}
+                <div style={{ display: "flex", gap: "var(--space-1)", marginTop: "var(--space-1)" }}>
+                  <button
+                    style={smallButtonStyle}
+                    disabled={i === 0}
+                    onClick={() => handleMoveMedia(m.id, -1)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    style={smallButtonStyle}
+                    disabled={i === media.length - 1}
+                    onClick={() => handleMoveMedia(m.id, 1)}
+                  >
+                    ↓
+                  </button>
+                  <button style={smallButtonStyle} onClick={() => handleDeleteMedia(m.id)}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <MediaUploadForm onUpload={handleUploadMedia} />
+      </section>
+
+      <section style={{ marginTop: "var(--space-10)" }}>
+        <h2 style={{ fontSize: "1.1rem" }}>Configurations</h2>
+        <ul style={{ listStyle: "none", padding: 0, margin: "var(--space-3) 0" }}>
+          {configurations.map((c) => (
+            <li
+              key={c.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "var(--space-2) 0",
+                borderBottom: "1px solid var(--color-border)",
+              }}
+            >
+              <span>
+                {c.name} — capacity {c.capacity}
+                {c.notes ? ` (${c.notes})` : ""}
+              </span>
+              <button style={smallButtonStyle} onClick={() => handleDeleteConfiguration(c.id)}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+        <ConfigurationForm onAdd={handleAddConfiguration} />
+      </section>
+
+      <section style={{ marginTop: "var(--space-10)" }}>
+        <h2 style={{ fontSize: "1.1rem" }}>Restrictions</h2>
+        <ul style={{ listStyle: "none", padding: 0, margin: "var(--space-3) 0" }}>
+          {restrictions.map((r) => (
+            <li
+              key={r.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "var(--space-2) 0",
+                borderBottom: "1px solid var(--color-border)",
+              }}
+            >
+              <span>
+                {r.kind.replace(/_/g, " ")}
+                {r.value ? `: ${r.value}` : ""} — {r.hard ? "hard limit" : "soft preference"}
+              </span>
+              <button style={smallButtonStyle} onClick={() => handleDeleteRestriction(r.id)}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+        <RestrictionForm onAdd={handleAddRestriction} />
+      </section>
+
+      <section style={{ marginTop: "var(--space-10)" }}>
+        <h2 style={{ fontSize: "1.1rem" }}>Pricing rules</h2>
+        <PricingRulesTab venueId={venueId} />
+      </section>
+    </main>
+  );
+}
+
+function MediaUploadForm({
+  onUpload,
+}: {
+  onUpload: (file: File, kind: MediaKind, caption: string) => Promise<void>;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [kind, setKind] = useState<MediaKind>("photo");
+  const [caption, setCaption] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!file) return;
+    setUploading(true);
+    await onUpload(file, kind, caption);
+    setFile(null);
+    setCaption("");
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", alignItems: "center" }}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,video/*,application/pdf"
+        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+      />
+      <select value={kind} onChange={(e) => setKind(e.target.value as MediaKind)} style={{ ...inputStyle, width: "auto" }}>
+        {MEDIA_KINDS.map((k) => (
+          <option key={k} value={k}>
+            {k.replace(/_/g, " ")}
+          </option>
+        ))}
+      </select>
+      <input
+        placeholder="Caption (optional)"
+        value={caption}
+        onChange={(e) => setCaption(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "1 1 160px" }}
+      />
+      <button type="submit" disabled={uploading || !file} style={smallButtonStyle}>
+        {uploading ? "Uploading…" : "Upload"}
+      </button>
+    </form>
+  );
+}
+
+function ConfigurationForm({ onAdd }: { onAdd: (config: VenueConfigurationCreate) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [capacity, setCapacity] = useState("");
+  const [notes, setNotes] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const capacityNum = Number(capacity);
+    if (!name.trim() || !Number.isFinite(capacityNum) || capacityNum <= 0) return;
+    setAdding(true);
+    await onAdd({ name: name.trim(), capacity: capacityNum, notes: notes.trim() || null });
+    setName("");
+    setCapacity("");
+    setNotes("");
+    setAdding(false);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+      <input
+        placeholder="Layout name (e.g. Banquet)"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "2 1 160px" }}
+      />
+      <input
+        placeholder="Capacity"
+        type="number"
+        min={1}
+        value={capacity}
+        onChange={(e) => setCapacity(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "1 1 100px" }}
+      />
+      <input
+        placeholder="Notes (optional)"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "2 1 160px" }}
+      />
+      <button type="submit" disabled={adding} style={smallButtonStyle}>
+        {adding ? "Adding…" : "Add layout"}
+      </button>
+    </form>
+  );
+}
+
+function RestrictionForm({ onAdd }: { onAdd: (restriction: VenueRestrictionCreate) => Promise<void> }) {
+  const [kind, setKind] = useState<RestrictionKind>("no_amplified_music");
+  const [value, setValue] = useState("");
+  const [hard, setHard] = useState(true);
+  const [adding, setAdding] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setAdding(true);
+    await onAdd({ kind, value: value.trim() || null, hard });
+    setValue("");
+    setAdding(false);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", alignItems: "center" }}>
+      <select
+        value={kind}
+        onChange={(e) => setKind(e.target.value as RestrictionKind)}
+        style={{ ...inputStyle, width: "auto" }}
+      >
+        {RESTRICTION_KINDS.map((k) => (
+          <option key={k} value={k}>
+            {k.replace(/_/g, " ")}
+          </option>
+        ))}
+      </select>
+      <input
+        placeholder="Value (optional)"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "1 1 140px" }}
+      />
+      <label style={{ display: "flex", alignItems: "center", gap: "var(--space-1)", fontSize: "0.85rem" }}>
+        <input type="checkbox" checked={hard} onChange={(e) => setHard(e.target.checked)} />
+        Hard limit
+      </label>
+      <button type="submit" disabled={adding} style={smallButtonStyle}>
+        {adding ? "Adding…" : "Add restriction"}
+      </button>
+    </form>
+  );
+}

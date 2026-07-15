@@ -1,0 +1,15 @@
+[project]
+name = "exclusive-venue-api"
+version = "0.1.0"
+description = "Exclusive Venue Platform — FastAPI service (AI orchestration, pricing engine, migrations, webhooks)"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

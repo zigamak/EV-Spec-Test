@@ -1,0 +1,16 @@
+/* Internal/admin surfaces ship on provisional tokens (Tier 1) until the
+   brand kit lands — design-system/INTAKE.md. Client-facing surfaces (the
+   public Concierge below, proposal template) must not ship real content
+   against this file. */
+@import "../../design-system/tokens.provisional.css";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}

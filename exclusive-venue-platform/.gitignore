@@ -1,0 +1,25 @@
+# Secrets
+.env
+.env.*
+
+# Real client data (HK PDPO) — anonymized/ is committed, raw/ never is
+fixtures/raw/
+
+# Spec export artifacts
+specs/**/exports/
+
+# Dependencies / build output
+node_modules/
+.next/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,3 @@
+Revisions land here one per task (see docs/stack-profile.md and specs/0000-foundation/erd.md §10 for the revision-to-task map).
+First revision is 0001, cut in task A1 (profiles, user_roles + has_role() helper).
+Never a single upfront migration for the whole schema.

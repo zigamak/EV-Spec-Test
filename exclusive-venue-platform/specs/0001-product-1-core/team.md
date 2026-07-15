@@ -1,0 +1,3 @@
+- Mayor: PM, reviews all /verify verdicts, owns client decisions
+- coding agent: implements tasks.md, full file+shell access
+- test-security agent: writes tests only, runs the Section-6 checklist

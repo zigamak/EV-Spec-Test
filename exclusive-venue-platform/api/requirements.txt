@@ -1,0 +1,29 @@
+# Exclusive Venue Platform — API service + repo-root Alembic tooling.
+# Install into a venv activated from the repo root: pip install -r api/requirements.txt
+
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.6.1
+python-multipart==0.0.17
+
+# DB / migrations (alembic.ini lives at repo root, run from there)
+alembic==1.13.3
+sqlalchemy==2.0.36
+psycopg[binary]==3.2.3
+
+# Supabase (auth session verification via Auth API, storage signed URLs).
+# Must be recent enough to support the sb_publishable_.../sb_secret_...
+# key format (older SDKs client-side-validate keys as 3-segment JWTs and
+# reject the newer opaque format — see docs/stack-profile.md if this ever
+# needs pinning down again).
+supabase==2.31.0
+
+# AI orchestration (brief parser D1, re-rank E2, proposal copy G2)
+openai==2.45.0
+
+python-dotenv==1.0.1
+
+# Dev / test
+pytest==8.3.3
+ruff==0.7.4

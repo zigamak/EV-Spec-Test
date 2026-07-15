@@ -1,0 +1,92 @@
+name: CI
+
+# Test suite + golden set on every PR. /verify calls THIS suite, not its
+# own — one test truth (setup guide §1, §10). A revision that doesn't apply
+# cleanly to a fresh test DB fails the build before any tests run (I1).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          pip install -r api/requirements.txt --break-system-packages
+
+      - name: Bootstrap minimal auth schema (stand-in for Supabase)
+        # Plain postgres:16 has no `auth` schema — every migration from
+        # 0001 on references auth.users(id)/auth.uid() (Supabase-managed
+        # in the real project). This is the smallest stub that satisfies
+        # those FKs/RLS policy bodies so `alembic upgrade head` applies
+        # cleanly against a vanilla Postgres test DB. Never used at
+        # runtime — the deployed app always points at the real Supabase
+        # project, which already has the genuine `auth` schema.
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -c "
+            CREATE SCHEMA IF NOT EXISTS auth;
+            CREATE TABLE IF NOT EXISTS auth.users (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+            CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS \$\$ SELECT NULL::uuid \$\$;
+          "
+
+      - name: Alembic upgrade head (clean test DB)
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          alembic upgrade head
+
+      - name: Ruff
+        run: ruff check api/
+
+      - name: pytest (unit + pricing engine + golden set vs fixtures/anonymized/)
+        env:
+          SUPABASE_DB_URL: postgresql://postgres:postgres@localhost:5432/postgres
+          # Empty until the org secret is added — the golden set (D3)
+          # skips cleanly without it, same as local dev. Once a real key
+          # is added in repo settings, this suite becomes load-bearing
+          # with no workflow change needed.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          pytest api/ -v
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm ci --prefix web
+
+      - name: TypeScript strict check
+        run: npm run typecheck --prefix web
+
+      - name: Vitest
+        run: npm run test --prefix web
