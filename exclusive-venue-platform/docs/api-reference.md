@@ -87,7 +87,7 @@ Prefix: `/enquiries/{enquiry_id}/briefs`
 | Method | Path | Function | What it does |
 |---|---|---|---|
 | GET | `/enquiries/{enquiry_id}/briefs` | `list_briefs` | List every parsed version of this enquiry's brief, newest first. |
-| POST | `/enquiries/{enquiry_id}/briefs/parse` | `parse_brief` | Calls GPT (tool-calling, `app/services/brief_parser.py`) to turn the enquiry's raw text into a structured brief (date, guests, budget, event type, requirements). Stores a deterministic confidence-based `review_status` (`auto_accepted` ≥ 0.75, else `needs_review`) — never trusts the model's output as final. Returns **503** if no `OPENAI_API_KEY` is configured, **502** if the OpenAI call itself fails. |
+| POST | `/enquiries/{enquiry_id}/briefs/parse` | `parse_brief` | Calls the AI (tool-calling, `app/services/brief_parser.py`, provider chosen by `AI_PROVIDER` — see `app/core/llm.py`) to turn the enquiry's raw text into a structured brief (date, guests, budget, event type, requirements). Stores a deterministic confidence-based `review_status` (`auto_accepted` ≥ 0.75, else `needs_review`) — never trusts the model's output as final. Returns **503** if the active provider's API key isn't configured, **502** if the call itself fails. |
 | GET | `/enquiries/{enquiry_id}/briefs/{brief_id}` | `get_brief` | Fetch one version. |
 | PATCH | `/enquiries/{enquiry_id}/briefs/{brief_id}` | `update_brief` | Human review/correction. Editing any field sets `review_status=human_corrected`; a bare approval with no field changes sets `human_approved`. Always stamps `reviewed_by`. |
 
@@ -97,7 +97,7 @@ Prefix: `/briefs/{brief_id}/shortlist`
 
 | Method | Path | Function | What it does |
 |---|---|---|---|
-| GET | `/briefs/{brief_id}/shortlist?rerank=` | `get_shortlist` | **The deterministic filter (E1)**: loads every active venue, excludes anything over capacity, unavailable on the brief's date, hard-restriction-conflicting, or (with a 15% tolerance) over budget — returns a priced shortlist plus the excluded venues with reasons. If `rerank=true`, asks GPT (E2, `app/services/recommendation_engine.py`) to reorder the shortlist by soft criteria; the AI can **only** reorder — if its response doesn't contain exactly the input venue ids, the original deterministic order is kept instead. Returns 503/502 the same way as the parser if GPT is unavailable/fails. |
+| GET | `/briefs/{brief_id}/shortlist?rerank=` | `get_shortlist` | **The deterministic filter (E1)**: loads every active venue, excludes anything over capacity, unavailable on the brief's date, hard-restriction-conflicting, or (with a 15% tolerance) over budget — returns a priced shortlist plus the excluded venues with reasons. If `rerank=true`, asks the AI (E2, `app/services/recommendation_engine.py`) to reorder the shortlist by soft criteria; the AI can **only** reorder — if its response doesn't contain exactly the input venue ids, the original deterministic order is kept instead. Returns 503/502 the same way as the parser if the provider is unavailable/fails. |
 
 ## Proposals (`api/app/routers/proposals.py`)
 
@@ -110,11 +110,11 @@ No prefix (routes are `/proposals/...`).
 | GET | `/proposals/{proposal_id}` | `get_proposal` | Fetch one. |
 | PATCH | `/proposals/{proposal_id}` | `update_proposal` | Edit title/intro_copy/legal_boilerplate/status. |
 | POST | `/proposals/{proposal_id}/send` | `send_proposal` | Marks `status=sent`, stamps `sent_at`. |
-| POST | `/proposals/{proposal_id}/generate-intro-copy` | `generate_proposal_intro_copy` | GPT-drafted intro paragraph (plain completion, not tool-calling) from the brief + client org name. Writes straight into the ordinary editable `intro_copy` column — never authoritative, always rewritable. 503/502 on missing key/call failure. |
+| POST | `/proposals/{proposal_id}/generate-intro-copy` | `generate_proposal_intro_copy` | AI-drafted intro paragraph (plain completion, not tool-calling) from the brief + client org name. Writes straight into the ordinary editable `intro_copy` column — never authoritative, always rewritable. 503/502 on missing key/call failure. |
 | GET | `/proposals/{proposal_id}/venues` | `list_proposal_venues` | List the venues included in a proposal, in sort order. |
 | POST | `/proposals/{proposal_id}/venues` | `add_proposal_venue` | Attach a venue + configuration + pricing rule + a computed quote breakdown to the proposal. |
 | PATCH | `/proposals/{proposal_id}/venues/{proposal_venue_id}` | `update_proposal_venue` | Edit `venue_copy`/`sort_order`/`recommended`. |
-| POST | `/proposals/{proposal_id}/venues/{proposal_venue_id}/generate-copy` | `generate_proposal_venue_copy` | GPT-drafted per-venue sales copy, same non-authoritative pattern as intro copy. |
+| POST | `/proposals/{proposal_id}/venues/{proposal_venue_id}/generate-copy` | `generate_proposal_venue_copy` | AI-drafted per-venue sales copy, same non-authoritative pattern as intro copy. |
 | DELETE | `/proposals/{proposal_id}/venues/{proposal_venue_id}` | `remove_proposal_venue` | Drop a venue from the proposal. |
 | GET | `/proposals/{proposal_id}/links` | `list_links` | List shareable link tokens for a proposal. |
 | POST | `/proposals/{proposal_id}/links` | `create_link` | Mint a new tokenized shareable link (43-char URL-safe token, 30-day default expiry). |
@@ -144,11 +144,11 @@ Prefix: `/webhooks` — **Public, no auth required** (called by Resend's servers
 |---|---|
 | `api/app/core/scoped_client.py` | Builds a Supabase client scoped to the caller's own JWT for every authenticated request — RLS on the DB is what actually authorizes each read/write, not this module. |
 | `api/app/core/admin_client.py` | Service-role client, used only where the request has no user session to scope to (public proposal reader, inbound webhook) — the same role a Supabase Edge Function would play. |
-| `api/app/core/openai_client.py` | Shared OpenAI client + `PARSER_MODEL` (`gpt-4o-mini`), used by the brief parser, re-rank, and copy generation. |
+| `api/app/core/llm.py` | **Provider-agnostic AI client.** `AI_PROVIDER` env var (`openai`/`anthropic`/`gemini`) selects the adapter; `brief_parser.py`/`recommendation_engine.py`/`copy_generator.py` only ever call `get_llm_client().call_tool(...)` or `.generate_text(...)` — none of them import a provider SDK or know which one is active. Switching providers is a config change, not a code change. |
 | `api/app/services/pricing_engine.py` | The actual pricing calculator — pure function, zero AI, unit tested. |
 | `api/app/services/recommendation_engine.py` | The deterministic filter (E1) + AI re-rank (E2), with the "AI can only reorder" guarantee enforced in code. |
-| `api/app/services/brief_parser.py` | GPT tool-calling schema + call for turning raw enquiry text into a structured brief. |
-| `api/app/services/copy_generator.py` | GPT plain-completion calls for proposal intro/venue copy. |
+| `api/app/services/brief_parser.py` | Tool-calling schema + call for turning raw enquiry text into a structured brief. |
+| `api/app/services/copy_generator.py` | Plain-completion calls for proposal intro/venue copy. |
 | `api/app/services/stage_machine.py` | The enquiry pipeline's deterministic stage-transition graph. |
 | `api/app/services/webhook_verification.py` | Svix-scheme HMAC signature verification for inbound webhooks. |
 | `api/app/services/proposal_links.py` | Shareable-link token generation + default expiry. |

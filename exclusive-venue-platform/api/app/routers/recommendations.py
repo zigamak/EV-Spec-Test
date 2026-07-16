@@ -9,11 +9,11 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from openai import APIError as OpenAIAPIError
 from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.core.auth import StaffUser, require_staff_session
+from app.core.llm import LLMCallError, LLMUnavailableError
 from app.core.scoped_client import get_scoped_client
 from app.schemas.pricing import PricingRule, PricingRuleAddon
 from app.schemas.recommendation import (
@@ -128,9 +128,9 @@ def get_shortlist(brief_id: UUID, client: ScopedClient, _: Staff, rerank: bool =
     if rerank and shortlist:
         try:
             shortlist = rerank_shortlist(brief, shortlist)
-        except RuntimeError as exc:
+        except LLMUnavailableError as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-        except OpenAIAPIError as exc:
+        except LLMCallError as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Re-rank call failed: {exc}") from exc
 
     return ShortlistResponse(shortlist=shortlist, excluded=excluded)

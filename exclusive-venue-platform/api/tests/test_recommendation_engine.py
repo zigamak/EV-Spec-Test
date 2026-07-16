@@ -216,37 +216,16 @@ def test_sort_order_follows_shortlist_position():
 def test_rerank_never_changes_membership_on_malformed_response(monkeypatch):
     """E2's contract: if the model's reorder doesn't contain exactly the
     input venue_ids, fall back to E1's original order rather than trust
-    a malformed response. Simulated here without a live GPT call."""
-    import json
-
+    a malformed response. Simulated here without a live AI call — mocks
+    at the provider-agnostic app.core.llm boundary, not any specific
+    provider's SDK shape."""
     import app.services.recommendation_engine as engine
 
-    class FakeFunction:
-        arguments = json.dumps({"ordered_venue_ids": [str(uuid4())]})  # bogus id, not in the shortlist
-
-    class FakeToolCall:
-        function = FakeFunction()
-
-    class FakeMessage:
-        tool_calls = [FakeToolCall()]
-
-    class FakeChoice:
-        message = FakeMessage()
-
-    class FakeResponse:
-        choices = [FakeChoice()]
-
-    class FakeCompletions:
-        def create(self, **kwargs):
-            return FakeResponse()
-
-    class FakeChat:
-        completions = FakeCompletions()
-
     class FakeClient:
-        chat = FakeChat()
+        def call_tool(self, prompt, tool):
+            return {"ordered_venue_ids": [str(uuid4())]}  # bogus id, not in the shortlist
 
-    monkeypatch.setattr(engine, "get_openai_client", lambda: FakeClient())
+    monkeypatch.setattr(engine, "get_llm_client", lambda: FakeClient())
 
     entries = [
         ShortlistEntry(

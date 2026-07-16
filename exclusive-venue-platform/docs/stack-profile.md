@@ -10,7 +10,7 @@
   Supabase Postgres connection string. Lives at repo root: `alembic.ini` +
   `migrations/env.py` + `migrations/versions/`.
 - Deploy: Render Web Services ×2 (web, api). Staging + production.
-- AI: OpenAI API (gpt-4o-mini). Email: Resend (inbound parse + outbound). Payments: Stripe (HK).
+- AI: provider-agnostic (`api/app/core/llm.py`) — OpenAI (gpt-4o-mini) by default, Anthropic or Gemini via `AI_PROVIDER` env var, no code changes. Email: Resend (inbound parse + outbound). Payments: Stripe (HK).
 
 ## Conventions
 - TypeScript strict; Python type hints + ruff

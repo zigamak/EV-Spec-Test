@@ -19,7 +19,14 @@ psycopg[binary]==3.2.3
 # needs pinning down again).
 supabase==2.31.0
 
-# AI orchestration (brief parser D1, re-rank E2, proposal copy G2)
+# AI orchestration (brief parser D1, re-rank E2, proposal copy G2) —
+# provider-agnostic via app/core/llm.py + AI_PROVIDER (api/.env). Only the
+# active provider's SDK is imported at runtime (lazily, inside its adapter
+# class in llm.py), so only that one needs to actually be installed.
+# Switching AI_PROVIDER=anthropic or =gemini needs the matching package
+# added here too:
+#   anthropic==0.39.0          (AI_PROVIDER=anthropic)
+#   google-generativeai==0.8.3 (AI_PROVIDER=gemini — unverified, see llm.py)
 openai==2.45.0
 
 python-dotenv==1.0.1

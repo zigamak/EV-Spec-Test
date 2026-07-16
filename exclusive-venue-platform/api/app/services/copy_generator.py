@@ -1,4 +1,4 @@
-"""Proposal copy generation (task G2) — GPT drafts intro/venue copy;
+"""Proposal copy generation (task G2) — AI drafts intro/venue copy;
 nothing here is authoritative. Output lands in the same plain, editable
 `intro_copy`/`venue_copy` columns a human can freely rewrite afterward —
 there's no separate "AI-locked" state (constitution #1: AI copy is always
@@ -8,9 +8,7 @@ is a copy-quality concern, not a trust-boundary one, so it isn't gated
 the same way UI work is.
 """
 
-from app.core.openai_client import get_openai_client
-
-COPY_MODEL = "gpt-4o-mini"
+from app.core.llm import get_llm_client
 
 _BRAND_VOICE_PLACEHOLDER = (
     "Write in a polished, warm, professional tone suitable for a luxury "
@@ -25,7 +23,6 @@ def generate_intro_copy(
     event_date: str | None,
     organisation_name: str | None,
 ) -> str:
-    client = get_openai_client()
     details = ", ".join(
         filter(
             None,
@@ -43,11 +40,7 @@ def generate_intro_copy(
         f"proposal. Known details: {details or 'none provided'}. "
         "Do not invent specifics not given above."
     )
-    response = client.chat.completions.create(
-        model=COPY_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.choices[0].message.content or ""
+    return get_llm_client().generate_text(prompt)
 
 
 def generate_venue_copy(
@@ -57,7 +50,6 @@ def generate_venue_copy(
     quote_total: float,
     currency: str,
 ) -> str:
-    client = get_openai_client()
     prompt = (
         f"{_BRAND_VOICE_PLACEHOLDER}\n\n"
         f"Write a short (2-3 sentence) description selling this specific venue option "
@@ -66,8 +58,4 @@ def generate_venue_copy(
         f"Layout: {configuration_name}. Indicative total: {currency} {quote_total:,.0f}. "
         "Do not invent amenities or features not mentioned above."
     )
-    response = client.chat.completions.create(
-        model=COPY_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.choices[0].message.content or ""
+    return get_llm_client().generate_text(prompt)

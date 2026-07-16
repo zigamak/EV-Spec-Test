@@ -1,22 +1,23 @@
 """AI Brief Parser endpoints (tasks D1/D2): parse an enquiry into a
-versioned, structured brief. The parse itself is a GPT tool-calling call
-(app/services/brief_parser.py) — its output is never trusted as-is: it's
-validated against ParsedBrief, then persisted with a deterministic
-review_status (D2) that a human can override via PATCH (backs the D4 UI).
+versioned, structured brief. The parse itself is a tool-calling call
+through the provider-agnostic app/core/llm.py (app/services/brief_parser.py)
+— its output is never trusted as-is: it's validated against ParsedBrief,
+then persisted with a deterministic review_status (D2) that a human can
+override via PATCH (backs the D4 UI).
 """
 
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from openai import APIError as OpenAIAPIError
 from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.core.auth import StaffUser, require_staff_session
+from app.core.llm import LLMCallError, LLMUnavailableError
 from app.core.scoped_client import get_scoped_client
 from app.schemas.brief import Brief, BriefUpdate
-from app.services.brief_parser import PARSER_MODEL, parse_enquiry, score_review_status
+from app.services.brief_parser import current_parser_model, parse_enquiry, score_review_status
 
 router = APIRouter(prefix="/enquiries/{enquiry_id}/briefs", tags=["briefs"])
 
@@ -64,10 +65,9 @@ def parse_brief(enquiry_id: UUID, client: ScopedClient, _: Staff):
 
     try:
         parsed = parse_enquiry(enquiry["raw_content"])
-    except RuntimeError as exc:
-        # OPENAI_API_KEY not configured in this environment.
+    except LLMUnavailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    except OpenAIAPIError as exc:
+    except LLMCallError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Parser call failed: {exc}") from exc
 
     existing = (
@@ -85,7 +85,7 @@ def parse_brief(enquiry_id: UUID, client: ScopedClient, _: Staff):
         "enquiry_id": str(enquiry_id),
         "version": next_version,
         "review_status": score_review_status(parsed.confidence),
-        "parser_model": PARSER_MODEL,
+        "parser_model": current_parser_model(),
     }
     try:
         result = client.table("briefs").insert(body).execute()

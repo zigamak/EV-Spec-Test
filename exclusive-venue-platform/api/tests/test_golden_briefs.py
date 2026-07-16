@@ -1,9 +1,10 @@
 """Golden test harness (task D3): run the brief parser against every
 fixture in fixtures/anonymized/ and diff its output against each
-fixture's `expected` block. Skipped (not failed) when OPENAI_API_KEY
-isn't configured — this repo's dev environment has no key set, so this
-suite has only been exercised structurally (fixture loading, diff logic),
-not against a live GPT call. Wire into ci.yml (I1) where a key exists.
+fixture's `expected` block. Skipped (not failed) when the active
+AI_PROVIDER has no API key configured — this repo's dev environment has
+no key set, so this suite has only been exercised structurally (fixture
+loading, diff logic), not against a live call. Wire into ci.yml (I1)
+where a key exists.
 """
 
 import json
@@ -20,6 +21,16 @@ FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "anonymized"
 # failure rather than a logged drift — see docs/progress.md for the
 # rationale on why this stays permissive early on.
 MIN_FIELD_MATCH_RATIO = 0.8
+
+
+def _active_provider_key_configured() -> bool:
+    settings = get_settings()
+    key_by_provider = {
+        "openai": settings.openai_api_key,
+        "anthropic": settings.anthropic_api_key,
+        "gemini": settings.gemini_api_key,
+    }
+    return bool(key_by_provider.get(settings.ai_provider.lower()))
 
 
 def _load_fixtures() -> list[tuple[str, dict]]:
@@ -39,8 +50,8 @@ def _diff(expected: dict, actual: dict) -> list[str]:
 
 
 @pytest.mark.skipif(
-    not get_settings().openai_api_key,
-    reason="OPENAI_API_KEY not configured — golden set needs a live GPT call",
+    not _active_provider_key_configured(),
+    reason="no API key configured for the active AI_PROVIDER — golden set needs a live call",
 )
 def test_golden_briefs_diff_report():
     fixtures = _load_fixtures()

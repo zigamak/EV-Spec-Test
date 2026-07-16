@@ -10,11 +10,11 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from openai import APIError as OpenAIAPIError
 from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.core.auth import StaffUser, require_staff_session
+from app.core.llm import LLMCallError, LLMUnavailableError
 from app.core.scoped_client import get_scoped_client
 from app.schemas.proposal import (
     Proposal,
@@ -142,9 +142,9 @@ def generate_proposal_intro_copy(proposal_id: UUID, client: ScopedClient, _: Sta
         intro_copy = generate_intro_copy(
             brief.get("event_type"), brief.get("guest_count"), brief.get("event_date"), organisation_name
         )
-    except RuntimeError as exc:
+    except LLMUnavailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    except OpenAIAPIError as exc:
+    except LLMCallError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Copy generation failed: {exc}") from exc
 
     try:
@@ -257,9 +257,9 @@ def generate_proposal_venue_copy(
             proposal_venue["quote_total"],
             proposal["currency"],
         )
-    except RuntimeError as exc:
+    except LLMUnavailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    except OpenAIAPIError as exc:
+    except LLMCallError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Copy generation failed: {exc}") from exc
 
     try:

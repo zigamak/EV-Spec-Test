@@ -1,6 +1,8 @@
 # Secrets
 .env
 .env.*
+!.env.example
+!web/.env.example
 
 # Real client data (HK PDPO) — anonymized/ is committed, raw/ never is
 fixtures/raw/

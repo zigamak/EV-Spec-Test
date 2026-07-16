@@ -1,4 +1,4 @@
-"""Deterministic recommendation filter (task E1) + GPT re-rank (E2).
+"""Deterministic recommendation filter (task E1) + AI re-rank (E2).
 
 E1 is the trust-boundary anchor for this whole engine (constitution #1):
 a pure function, capacity/availability/restrictions/budget only, zero AI.
@@ -12,7 +12,7 @@ import json
 from datetime import date
 from uuid import UUID
 
-from app.core.openai_client import get_openai_client
+from app.core.llm import ToolSchema, get_llm_client
 from app.schemas.pricing import QuoteRequest
 from app.schemas.recommendation import (
     BriefInput,
@@ -37,8 +37,6 @@ RESTRICTION_CONFLICT_KEYS = {
 # beyond it, the venue is excluded rather than merely deprioritized.
 BUDGET_TOLERANCE = 0.15
 
-# Fast, cheap model — a reorder task, not generative copy (that's G2).
-RERANK_MODEL = "gpt-4o-mini"
 
 
 def _has_overlap(event_date: date, windows: list) -> bool:
@@ -156,38 +154,34 @@ def filter_venues(
     return shortlist, excluded
 
 
-RERANK_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "reorder_shortlist",
-        "description": (
-            "Reorder a venue shortlist by fit against the client's soft criteria. "
-            "You may ONLY reorder the given venue_ids — never add, remove, or invent one."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "ordered_venue_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "All input venue_ids, reordered best-fit first.",
-                }
-            },
-            "required": ["ordered_venue_ids"],
+RERANK_TOOL = ToolSchema(
+    name="reorder_shortlist",
+    description=(
+        "Reorder a venue shortlist by fit against the client's soft criteria. "
+        "You may ONLY reorder the given venue_ids — never add, remove, or invent one."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ordered_venue_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "All input venue_ids, reordered best-fit first.",
+            }
         },
+        "required": ["ordered_venue_ids"],
     },
-}
+)
 
 
 def rerank_shortlist(brief: BriefInput, shortlist: list[ShortlistEntry]) -> list[ShortlistEntry]:
-    """GPT re-rank (task E2). Structurally cannot add/remove entries:
+    """AI re-rank (task E2). Structurally cannot add/remove entries:
     any id the model returns that wasn't in the input, or any input id it
     drops, is rejected and the original (E1) order is returned untouched
     rather than silently trusting a malformed reorder."""
     if len(shortlist) <= 1:
         return shortlist
 
-    client = get_openai_client()
     prompt = json.dumps(
         {
             "soft_requirements": brief.requirements,
@@ -203,14 +197,7 @@ def rerank_shortlist(brief: BriefInput, shortlist: list[ShortlistEntry]) -> list
             ],
         }
     )
-    response = client.chat.completions.create(
-        model=RERANK_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        tools=[RERANK_TOOL],
-        tool_choice={"type": "function", "function": {"name": "reorder_shortlist"}},
-    )
-    tool_call = response.choices[0].message.tool_calls[0]
-    arguments = json.loads(tool_call.function.arguments)
+    arguments = get_llm_client().call_tool(prompt, RERANK_TOOL)
     ordered_ids = [UUID(v) for v in arguments["ordered_venue_ids"]]
 
     original_ids = {e.venue_id for e in shortlist}
