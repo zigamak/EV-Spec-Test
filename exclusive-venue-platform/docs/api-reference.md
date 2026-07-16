@@ -13,6 +13,8 @@ Prefix: `/venues`
 | Method | Path | Function | What it does |
 |---|---|---|---|
 | GET | `/venues` | `list_venues` | List venues, optional `status_filter` query param (draft/pending_approval/active/inactive). |
+| GET | `/venues/portfolio-availability` | `list_venues_with_availability` | Same as `/venues` but embeds each venue's availability windows in the same query (`select=*,availability:venue_availability(*)`) — added 16 Jul so the Calendar page fetches every venue's holds/bookings in one round trip instead of looping per venue. Must stay declared before `/{venue_id}` (FastAPI route-matching order). |
+| GET | `/venues/portfolio` | `list_venues_with_portfolio` | Same as `/venues` but embeds each venue's media (with signed URLs) and configurations in the same query — added 16 Jul so the Venue Library page fetches everything in one round trip instead of two calls per venue. Must also stay declared before `/{venue_id}`. |
 | GET | `/venues/{venue_id}` | `get_venue` | Fetch one venue. 404 if not found or not visible under RLS. |
 | POST | `/venues` | `create_venue` | Create a venue. Landlords can only create their own (`landlord_id = self`, forced to `pending_approval`); staff can create any. |
 | PATCH | `/venues/{venue_id}` | `update_venue` | Update venue fields. RLS blocks a landlord from setting `status` to anything but draft/pending_approval on their own venue. |
@@ -73,7 +75,7 @@ No prefix (routes are `/organisations`, `/contacts`, `/enquiries`).
 | POST | `/contacts` | `create_contact` | Create a contact (name, email, phone, org, source). |
 | GET | `/contacts/{contact_id}` | `get_contact` | Fetch one. |
 | PATCH | `/contacts/{contact_id}` | `update_contact` | Edit one. |
-| GET | `/enquiries` | `list_enquiries` | List enquiries, optional `stage`/`assigned_to` filters. |
+| GET | `/enquiries` | `list_enquiries` | List enquiries, optional `stage`/`assigned_to` filters. Embeds every brief version per enquiry (`select=*,briefs(*)`) — added 16 Jul so the Pipeline Board and Calendar pages get each enquiry's briefs in one round trip instead of one `GET .../briefs` per enquiry. Callers pick the highest `version` themselves. |
 | POST | `/enquiries` | `create_enquiry` | Create an enquiry (staff manual-entry path — always stamps `created_by`; anonymous intake is a separate service-role path, see Webhooks below). |
 | GET | `/enquiries/{enquiry_id}` | `get_enquiry` | Fetch one. |
 | PATCH | `/enquiries/{enquiry_id}` | `update_enquiry` | Edit `contact_id`/`lost_reason` only — **`stage` is deliberately excluded** here, forcing every stage change through the transition endpoint below. |

@@ -10,6 +10,9 @@ fixtures/raw/
 # Spec export artifacts
 specs/**/exports/
 
+# Runtime logs (api/app/core/logging_config.py)
+logs/
+
 # Dependencies / build output
 node_modules/
 .next/

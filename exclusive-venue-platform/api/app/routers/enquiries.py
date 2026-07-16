@@ -25,6 +25,7 @@ from app.schemas.enquiry import (
     EnquiryCreate,
     EnquiryStage,
     EnquiryUpdate,
+    EnquiryWithBriefs,
     Organisation,
     OrganisationCreate,
     OrganisationUpdate,
@@ -158,14 +159,19 @@ def update_contact(contact_id: UUID, payload: ContactUpdate, client: ScopedClien
 # --- enquiries -----------------------------------------------------------
 
 
-@router.get("/enquiries", response_model=list[Enquiry])
+@router.get("/enquiries", response_model=list[EnquiryWithBriefs])
 def list_enquiries(
     client: ScopedClient,
     _: Staff,
     stage: EnquiryStage | None = None,
     assigned_to: UUID | None = None,
 ):
-    query = client.table("enquiries").select("*").order("created_at", desc=True)
+    """Embeds every brief version per enquiry via PostgREST's relationship
+    syntax (`briefs(*)`) in the same round trip — avoids callers looping
+    back with one `GET .../briefs` per enquiry (found live 16 Jul as one
+    of the two worst N+1 offenders alongside the Calendar venue/availability
+    loop). Callers should pick the highest `version` themselves."""
+    query = client.table("enquiries").select("*, briefs(*)").order("created_at", desc=True)
     if stage:
         query = query.eq("stage", stage)
     if assigned_to:

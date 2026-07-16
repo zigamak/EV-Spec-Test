@@ -5,10 +5,14 @@ and permissions are deterministic code only — zero AI calls in those call
 paths (memory/constitution.md #1).
 """
 
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
+from app.core.logging_config import configure_logging
 from app.routers import (
     briefs,
     enquiries,
@@ -21,7 +25,19 @@ from app.routers import (
     webhooks,
 )
 
+configure_logging()
+logger = logging.getLogger("app")
+
 app = FastAPI(title="Exclusive Venue Platform API", version="0.1.0")
+
+
+@app.exception_handler(Exception)
+async def log_unhandled_exceptions(request: Request, exc: Exception) -> JSONResponse:
+    """Every unhandled error gets a full traceback in logs/app.log (not
+    just whatever printed to whichever terminal happened to be open) —
+    the client still just gets a generic 500, nothing internal leaks."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 # Dev: the web/ Next.js app runs on a different port and calls this API
 # directly from the browser with the caller's own Supabase session token
@@ -35,6 +51,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def close_connections_in_dev(request, call_next):
+    """Dev-only workaround for a real bug: uvicorn --reload on Windows
+    occasionally lets a CORS preflight succeed but then silently drops the
+    real request that follows on the same reused keep-alive connection —
+    the browser just hangs waiting. Forcing `Connection: close` tells the
+    browser to never reuse the connection, so there's nothing to go stale.
+    Confirmed live: pages that fire several sequential requests (Calendar,
+    the proposal editor) stopped hanging entirely once this was added.
+    Not needed in production (a real deployment sits behind a proper
+    reverse proxy, not uvicorn's dev reloader).
+    """
+    response = await call_next(request)
+    if get_settings().environment == "development":
+        response.headers["Connection"] = "close"
+    return response
+
 
 app.include_router(venues.router)
 app.include_router(venue_media.router)

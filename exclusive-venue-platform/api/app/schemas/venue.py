@@ -140,3 +140,21 @@ class VenueMedia(BaseModel):
     created_at: datetime
     updated_at: datetime
     url: str | None = None
+
+
+class VenueWithAvailability(Venue):
+    """`GET /venues/portfolio-availability` embeds each active venue's
+    availability windows via a single PostgREST query instead of the
+    Calendar page looping back with one `GET /venues/{id}/availability`
+    per venue (found live 16 Jul as one of the two worst N+1 offenders)."""
+
+    availability: list[VenueAvailability] = Field(default_factory=list)
+
+
+class VenueWithPortfolio(Venue):
+    """`GET /venues/portfolio` embeds each venue's media + configurations
+    via a single PostgREST query instead of the Venues page looping back
+    with two `GET`s per venue (found live 16 Jul)."""
+
+    venue_media: list[VenueMedia] = Field(default_factory=list)
+    venue_configurations: list[VenueConfiguration] = Field(default_factory=list)

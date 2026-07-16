@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from postgrest.exceptions import APIError
 from supabase import Client
 
+from app.core import storage
 from app.core.auth import StaffUser, require_staff_session
 from app.core.scoped_client import get_scoped_client
 from app.schemas.venue import (
@@ -26,6 +27,8 @@ from app.schemas.venue import (
     VenueRestrictionCreate,
     VenueRestrictionUpdate,
     VenueUpdate,
+    VenueWithAvailability,
+    VenueWithPortfolio,
 )
 
 router = APIRouter(prefix="/venues", tags=["venues"])
@@ -64,6 +67,50 @@ def list_venues(client: ScopedClient, _: Staff, status_filter: str | None = None
         result = query.execute()
     except APIError as exc:
         _raise_for_postgrest(exc)
+    return result.data
+
+
+# NOTE: these two batched routes must stay declared before "/{venue_id}" —
+# FastAPI matches path operations in declaration order, so a static route
+# after the dynamic one would never be reached (it'd match "/{venue_id}"
+# with venue_id="portfolio-availability" instead).
+
+
+@router.get("/portfolio-availability", response_model=list[VenueWithAvailability])
+def list_venues_with_availability(client: ScopedClient, _: Staff, status_filter: str | None = None):
+    """Embeds each venue's availability windows via PostgREST's relationship
+    syntax in one round trip — replaces the Calendar page's per-venue
+    `GET /venues/{id}/availability` loop (found live 16 Jul as one of the
+    two worst N+1 offenders)."""
+    query = client.table("venues").select("*, availability:venue_availability(*)").order(
+        "created_at", desc=True
+    )
+    if status_filter:
+        query = query.eq("status", status_filter)
+    try:
+        result = query.execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return result.data
+
+
+@router.get("/portfolio", response_model=list[VenueWithPortfolio])
+def list_venues_with_portfolio(client: ScopedClient, _: Staff, status_filter: str | None = None):
+    """Embeds each venue's media + configurations via PostgREST's
+    relationship syntax in one round trip — replaces the Venues page's
+    per-venue media/configuration loop (found live 16 Jul)."""
+    query = client.table("venues").select(
+        "*, venue_media(*), venue_configurations(*)"
+    ).order("created_at", desc=True)
+    if status_filter:
+        query = query.eq("status", status_filter)
+    try:
+        result = query.execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    for venue in result.data:
+        for media in venue.get("venue_media", []):
+            media["url"] = storage.signed_url(media["storage_path"])
     return result.data
 
 

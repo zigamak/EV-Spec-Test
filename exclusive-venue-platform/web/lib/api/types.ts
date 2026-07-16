@@ -111,6 +111,18 @@ export interface VenueAvailabilityCreate {
   note?: string | null;
 }
 
+// `GET /venues/portfolio-availability` and `GET /venues/portfolio` embed
+// related rows in one query (16 Jul N+1 batching fix) instead of callers
+// looping back with one request per venue.
+export interface VenueWithAvailability extends Venue {
+  availability: VenueAvailability[];
+}
+
+export interface VenueWithPortfolio extends Venue {
+  venue_media: VenueMedia[];
+  venue_configurations: VenueConfiguration[];
+}
+
 // --- Enquiry intake (C1) ---------------------------------------------
 
 export type OrganisationKind = "corporate" | "agency" | "brand" | "production_house" | "other";
@@ -194,6 +206,15 @@ export interface EnquiryCreate {
   channel: EnquiryChannel;
   raw_content: string;
   assigned_to?: string | null;
+}
+
+// `GET /enquiries` embeds every brief version per enquiry in one query
+// (16 Jul N+1 batching fix) instead of one `GET .../briefs` per enquiry.
+// Declared here (rather than near Brief below) since it depends on
+// Enquiry; pick the highest `version` yourself, embedded order isn't
+// guaranteed.
+export interface EnquiryWithBriefs extends Enquiry {
+  briefs: Brief[];
 }
 
 // --- AI Brief Parser (D1) ---------------------------------------------

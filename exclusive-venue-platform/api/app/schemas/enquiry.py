@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.brief import Brief
+
 OrganisationKind = Literal["corporate", "agency", "brand", "production_house", "other"]
 ContactSource = Literal["email", "web_form", "concierge", "manual"]
 EnquiryChannel = Literal["email", "web_form", "manual", "concierge"]
@@ -88,3 +90,17 @@ class Enquiry(BaseModel):
     lost_reason: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class EnquiryWithBriefs(Enquiry):
+    """`GET /enquiries` embeds every brief version via a single PostgREST
+    query (`select=*,briefs(*)`) instead of the list endpoint's callers
+    each looping back with one `GET .../briefs` per enquiry — found live
+    16 Jul: that N+1 pattern, combined with this project's Supabase
+    project being in a different region than wherever the API runs, was
+    the actual cause of the Pipeline Board and Calendar feeling slow, not
+    a FastAPI/React incompatibility. Pick the latest by `version` client-
+    side rather than relying on PostgREST's embedded-resource ordering,
+    which isn't reliably supported across versions."""
+
+    briefs: list[Brief] = Field(default_factory=list)

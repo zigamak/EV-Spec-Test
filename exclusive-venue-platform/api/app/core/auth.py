@@ -6,8 +6,18 @@ newer asymmetric-signing key system, `sb_publishable_...`/`sb_secret_...` +
 a JWKS endpoint, so there is no shared HS256 secret to decode with locally).
 Role authorization happens at the DB layer via `has_role()` + RLS, never
 here — this module only confirms *who* is calling, not what they can do.
+
+**Performance note (found live, 16 Jul):** verifying against Supabase's
+Auth API is a real network round-trip (~1-2s observed), and a page that
+fires several requests (Calendar, the proposal editor) was paying that
+cost on *every single one* — the actual cause of pages feeling slow, not
+a bug in the request/response cycle itself. A short-lived in-process
+cache keyed by the raw token avoids re-verifying the same session
+multiple times within one page load, while still re-checking often
+enough that a revoked session stops working within seconds, not hours.
 """
 
+import time
 from functools import lru_cache
 
 from fastapi import Header, HTTPException, status
@@ -28,11 +38,28 @@ def _admin_client() -> Client:
     return create_client(settings.supabase_url, settings.supabase_secret_key)
 
 
+_SESSION_CACHE_TTL_SECONDS = 30
+_session_cache: dict[str, tuple[float, StaffUser]] = {}
+
+
+def _prune_expired_sessions() -> None:
+    now = time.monotonic()
+    expired = [
+        t for t, (cached_at, _) in _session_cache.items() if now - cached_at > _SESSION_CACHE_TTL_SECONDS
+    ]
+    for t in expired:
+        del _session_cache[t]
+
+
 def require_staff_session(authorization: str = Header(default="")) -> StaffUser:
     if not authorization.startswith("Bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
 
     token = authorization.removeprefix("Bearer ").strip()
+
+    cached = _session_cache.get(token)
+    if cached is not None and time.monotonic() - cached[0] <= _SESSION_CACHE_TTL_SECONDS:
+        return cached[1]
 
     try:
         response = _admin_client().auth.get_user(token)
@@ -43,4 +70,7 @@ def require_staff_session(authorization: str = Header(default="")) -> StaffUser:
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired session")
 
-    return StaffUser(user_id=user.id, email=user.email)
+    staff_user = StaffUser(user_id=user.id, email=user.email)
+    _prune_expired_sessions()
+    _session_cache[token] = (time.monotonic(), staff_user)
+    return staff_user
