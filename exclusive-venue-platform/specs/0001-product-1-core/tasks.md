@@ -296,7 +296,8 @@
       plus inline editable brief fields (staff correct what AI/client missed).
       — **Step 2 (Curate venues)**: portfolio grid + "Fits brief" shortlist,
       1–5 pick persisted to proposal_venues on toggle. Category ribbon
-      deferred (no venue `category` column yet).
+      now live (18 Jul, migration 0011 added `venues.category`) on the
+      `/app/venues` portfolio page; not yet threaded into this step's picker.
       — **Step 3 (Generate pricing)**: per-venue quote breakdown from each
       proposal_venue's stored `quote_breakdown`, with a manual total override
       (`PATCH /proposals/{id}/venues/{pv}`). Deterministic — no AI.

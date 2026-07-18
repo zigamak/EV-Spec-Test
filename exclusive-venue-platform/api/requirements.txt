@@ -3,7 +3,7 @@
 
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
-pydantic==2.9.2
+pydantic==2.11.7
 pydantic-settings==2.6.1
 python-multipart==0.0.17
 
@@ -26,7 +26,6 @@ supabase==2.31.0
 # Switching AI_PROVIDER=anthropic or =gemini needs the matching package
 # added here too:
 #   anthropic==0.39.0          (AI_PROVIDER=anthropic)
-#   google-generativeai==0.8.3 (AI_PROVIDER=gemini — unverified, see llm.py)
 openai==2.45.0
 
 # Gemini currently active (AI_PROVIDER=gemini) — see api/.env.

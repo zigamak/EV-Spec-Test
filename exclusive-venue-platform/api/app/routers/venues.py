@@ -59,10 +59,14 @@ def _get_venue_or_404(client: Client, venue_id: UUID) -> dict:
 
 
 @router.get("", response_model=list[Venue])
-def list_venues(client: ScopedClient, _: Staff, status_filter: str | None = None):
+def list_venues(
+    client: ScopedClient, _: Staff, status_filter: str | None = None, category_filter: str | None = None
+):
     query = client.table("venues").select("*").order("created_at", desc=True)
     if status_filter:
         query = query.eq("status", status_filter)
+    if category_filter:
+        query = query.eq("category", category_filter)
     try:
         result = query.execute()
     except APIError as exc:
@@ -95,7 +99,9 @@ def list_venues_with_availability(client: ScopedClient, _: Staff, status_filter:
 
 
 @router.get("/portfolio", response_model=list[VenueWithPortfolio])
-def list_venues_with_portfolio(client: ScopedClient, _: Staff, status_filter: str | None = None):
+def list_venues_with_portfolio(
+    client: ScopedClient, _: Staff, status_filter: str | None = None, category_filter: str | None = None
+):
     """Embeds each venue's media + configurations via PostgREST's
     relationship syntax in one round trip — replaces the Venues page's
     per-venue media/configuration loop (found live 16 Jul)."""
@@ -108,6 +114,8 @@ def list_venues_with_portfolio(client: ScopedClient, _: Staff, status_filter: st
     ).order("created_at", desc=True)
     if status_filter:
         query = query.eq("status", status_filter)
+    if category_filter:
+        query = query.eq("category", category_filter)
     try:
         result = query.execute()
     except APIError as exc:

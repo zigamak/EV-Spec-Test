@@ -6,15 +6,29 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import PricingRulesTab from "./PricingRulesTab";
 import {
+  FILM_STATUS_LABEL,
   RESTRICTION_KINDS,
+  SUGGESTED_ACCEPTED_EVENT_TYPES,
+  SUGGESTED_IDEAL_FOR,
+  SUGGESTED_VENUE_AMENITIES,
+  VENUE_CATEGORIES,
+  VENUE_CATEGORY_LABEL,
+  type FilmStatus,
   type MediaKind,
   type RestrictionKind,
   type Venue,
+  type VenueActivation,
+  type VenueActivationCreate,
+  type VenueCategory,
   type VenueConfiguration,
   type VenueConfigurationCreate,
+  type VenueFilm,
+  type VenueFilmCreate,
   type VenueMedia,
   type VenueRestriction,
   type VenueRestrictionCreate,
+  type VenueTeamContact,
+  type VenueTeamContactCreate,
   type VenueUpdate,
 } from "@/lib/api/types";
 
@@ -55,22 +69,32 @@ export default function EditVenuePage() {
   const [configurations, setConfigurations] = useState<VenueConfiguration[]>([]);
   const [restrictions, setRestrictions] = useState<VenueRestriction[]>([]);
   const [media, setMedia] = useState<VenueMedia[]>([]);
+  const [activations, setActivations] = useState<VenueActivation[]>([]);
+  const [films, setFilms] = useState<VenueFilm[]>([]);
+  const [teamContacts, setTeamContacts] = useState<VenueTeamContact[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [venueData, configData, restrictionData, mediaData] = await Promise.all([
-        apiFetch<Venue>(`/venues/${venueId}`),
-        apiFetch<VenueConfiguration[]>(`/venues/${venueId}/configurations`),
-        apiFetch<VenueRestriction[]>(`/venues/${venueId}/restrictions`),
-        apiFetch<VenueMedia[]>(`/venues/${venueId}/media`),
-      ]);
+      const [venueData, configData, restrictionData, mediaData, activationData, filmData, teamData] =
+        await Promise.all([
+          apiFetch<Venue>(`/venues/${venueId}`),
+          apiFetch<VenueConfiguration[]>(`/venues/${venueId}/configurations`),
+          apiFetch<VenueRestriction[]>(`/venues/${venueId}/restrictions`),
+          apiFetch<VenueMedia[]>(`/venues/${venueId}/media`),
+          apiFetch<VenueActivation[]>(`/venues/${venueId}/activations`),
+          apiFetch<VenueFilm[]>(`/venues/${venueId}/films`),
+          apiFetch<VenueTeamContact[]>(`/venues/${venueId}/team`),
+        ]);
       setVenue(venueData);
       setConfigurations(configData);
       setRestrictions(restrictionData);
       setMedia(mediaData.sort((a, b) => a.sort_order - b.sort_order));
+      setActivations(activationData);
+      setFilms(filmData);
+      setTeamContacts(teamData);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load venue");
     }
@@ -91,6 +115,14 @@ export default function EditVenuePage() {
       description: venue.description?.trim() || null,
       address: venue.address?.trim() || null,
       district: venue.district?.trim() || null,
+      category: venue.category,
+      amenities: venue.amenities,
+      ideal_for: venue.ideal_for,
+      accepted_event_types: venue.accepted_event_types,
+      surface_area_sqft: venue.surface_area_sqft,
+      room_count: venue.room_count,
+      access_note: venue.access_note?.trim() || null,
+      view_note: venue.view_note?.trim() || null,
     };
     try {
       await apiFetch<Venue>(`/venues/${venueId}`, {
@@ -202,6 +234,69 @@ export default function EditVenuePage() {
     }
   }
 
+  async function handleAddActivation(payload: VenueActivationCreate) {
+    try {
+      const created = await apiFetch<VenueActivation>(`/venues/${venueId}/activations`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setActivations((prev) => [...prev, created]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to add activation");
+    }
+  }
+
+  async function handleDeleteActivation(id: string) {
+    try {
+      await apiFetch(`/venues/${venueId}/activations/${id}`, { method: "DELETE" });
+      setActivations((prev) => prev.filter((a) => a.id !== id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to remove activation");
+    }
+  }
+
+  async function handleAddFilm(payload: VenueFilmCreate) {
+    try {
+      const created = await apiFetch<VenueFilm>(`/venues/${venueId}/films`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setFilms((prev) => [...prev, created]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to add film");
+    }
+  }
+
+  async function handleDeleteFilm(id: string) {
+    try {
+      await apiFetch(`/venues/${venueId}/films/${id}`, { method: "DELETE" });
+      setFilms((prev) => prev.filter((f) => f.id !== id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to remove film");
+    }
+  }
+
+  async function handleAddTeamContact(payload: VenueTeamContactCreate) {
+    try {
+      const created = await apiFetch<VenueTeamContact>(`/venues/${venueId}/team`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setTeamContacts((prev) => [...prev, created]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to add team contact");
+    }
+  }
+
+  async function handleDeleteTeamContact(id: string) {
+    try {
+      await apiFetch(`/venues/${venueId}/team/${id}`, { method: "DELETE" });
+      setTeamContacts((prev) => prev.filter((t) => t.id !== id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to remove team contact");
+    }
+  }
+
   if (!venue) {
     return (
       <main style={{ padding: "var(--space-8)" }}>
@@ -287,6 +382,115 @@ export default function EditVenuePage() {
           />
         </div>
 
+        <div>
+          <label style={labelStyle} htmlFor="category">
+            Category
+          </label>
+          <select
+            id="category"
+            style={inputStyle}
+            value={venue.category ?? ""}
+            onChange={(e) => setVenue({ ...venue, category: (e.target.value || null) as VenueCategory | null })}
+          >
+            <option value="">Uncategorized</option>
+            {VENUE_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {VENUE_CATEGORY_LABEL[c]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label style={labelStyle}>Features</label>
+          <ChipEditor
+            suggested={SUGGESTED_VENUE_AMENITIES}
+            selected={venue.amenities}
+            onChange={(amenities) => setVenue({ ...venue, amenities })}
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle}>Ideal for</label>
+          <p style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", margin: "0 0 var(--space-2)" }}>
+            Where this venue truly shines — shown as the profile's highlight tags.
+          </p>
+          <ChipEditor
+            suggested={SUGGESTED_IDEAL_FOR}
+            selected={venue.ideal_for}
+            onChange={(ideal_for) => setVenue({ ...venue, ideal_for })}
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle}>Accepted event types</label>
+          <p style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", margin: "0 0 var(--space-2)" }}>
+            The full list of formats this venue supports.
+          </p>
+          <ChipEditor
+            suggested={SUGGESTED_ACCEPTED_EVENT_TYPES}
+            selected={venue.accepted_event_types}
+            onChange={(accepted_event_types) => setVenue({ ...venue, accepted_event_types })}
+          />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+          <div>
+            <label style={labelStyle} htmlFor="surface_area">
+              Surface area (sq ft)
+            </label>
+            <input
+              id="surface_area"
+              type="number"
+              min={0}
+              style={inputStyle}
+              value={venue.surface_area_sqft ?? ""}
+              onChange={(e) =>
+                setVenue({ ...venue, surface_area_sqft: e.target.value ? Number(e.target.value) : null })
+              }
+            />
+          </div>
+          <div>
+            <label style={labelStyle} htmlFor="room_count">
+              Rooms
+            </label>
+            <input
+              id="room_count"
+              type="number"
+              min={0}
+              style={inputStyle}
+              value={venue.room_count ?? ""}
+              onChange={(e) => setVenue({ ...venue, room_count: e.target.value ? Number(e.target.value) : null })}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label style={labelStyle} htmlFor="access_note">
+            Access
+          </label>
+          <input
+            id="access_note"
+            style={inputStyle}
+            placeholder="e.g. By sampan only · car-free"
+            value={venue.access_note ?? ""}
+            onChange={(e) => setVenue({ ...venue, access_note: e.target.value })}
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle} htmlFor="view_note">
+            View
+          </label>
+          <input
+            id="view_note"
+            style={inputStyle}
+            placeholder="e.g. Ocean · garden · mountain"
+            value={venue.view_note ?? ""}
+            onChange={(e) => setVenue({ ...venue, view_note: e.target.value })}
+          />
+        </div>
+
         {error && <p style={{ color: "var(--color-danger)", margin: 0 }}>{error}</p>}
 
         <button
@@ -319,6 +523,18 @@ export default function EditVenuePage() {
                   <img
                     src={m.url}
                     alt={m.caption ?? ""}
+                    style={{
+                      width: "100%",
+                      height: "110px",
+                      objectFit: "cover",
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px solid var(--color-border)",
+                    }}
+                  />
+                ) : m.kind === "video" && m.url ? (
+                  <video
+                    src={m.url}
+                    controls
                     style={{
                       width: "100%",
                       height: "110px",
@@ -428,6 +644,90 @@ export default function EditVenuePage() {
           ))}
         </ul>
         <RestrictionForm onAdd={handleAddRestriction} />
+      </section>
+
+      <section style={{ marginTop: "var(--space-10)" }}>
+        <h2 style={{ fontSize: "1.1rem" }}>Past events</h2>
+        <ul style={{ listStyle: "none", padding: 0, margin: "var(--space-3) 0" }}>
+          {activations.map((a) => (
+            <li
+              key={a.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "var(--space-2) 0",
+                borderBottom: "1px solid var(--color-border)",
+              }}
+            >
+              <span>
+                <strong>{a.client_name}</strong>
+                {a.client_category ? ` (${a.client_category})` : ""}
+                {a.event_type ? ` — ${a.event_type}` : ""}
+                {a.event_date ? ` · ${a.event_date}` : ""}
+              </span>
+              <button style={smallButtonStyle} onClick={() => handleDeleteActivation(a.id)}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+        <ActivationForm onAdd={handleAddActivation} />
+      </section>
+
+      <section style={{ marginTop: "var(--space-10)" }}>
+        <h2 style={{ fontSize: "1.1rem" }}>Films</h2>
+        <ul style={{ listStyle: "none", padding: 0, margin: "var(--space-3) 0" }}>
+          {films.map((f) => (
+            <li
+              key={f.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "var(--space-2) 0",
+                borderBottom: "1px solid var(--color-border)",
+              }}
+            >
+              <span>
+                <strong>{f.title}</strong>
+                {f.duration_label ? ` (${f.duration_label})` : ""} — {FILM_STATUS_LABEL[f.status]}
+              </span>
+              <button style={smallButtonStyle} onClick={() => handleDeleteFilm(f.id)}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+        <FilmForm onAdd={handleAddFilm} />
+      </section>
+
+      <section style={{ marginTop: "var(--space-10)" }}>
+        <h2 style={{ fontSize: "1.1rem" }}>Dedicated team</h2>
+        <ul style={{ listStyle: "none", padding: 0, margin: "var(--space-3) 0" }}>
+          {teamContacts.map((t) => (
+            <li
+              key={t.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "var(--space-2) 0",
+                borderBottom: "1px solid var(--color-border)",
+              }}
+            >
+              <span>
+                <strong>{t.name}</strong> — {t.role}
+                {t.phone ? ` · ${t.phone}` : ""}
+                {t.email ? ` · ${t.email}` : ""}
+              </span>
+              <button style={smallButtonStyle} onClick={() => handleDeleteTeamContact(t.id)}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+        <TeamContactForm onAdd={handleAddTeamContact} />
       </section>
 
       <section style={{ marginTop: "var(--space-10)" }}>
@@ -574,6 +874,233 @@ function RestrictionForm({ onAdd }: { onAdd: (restriction: VenueRestrictionCreat
       </label>
       <button type="submit" disabled={adding} style={smallButtonStyle}>
         {adding ? "Adding…" : "Add restriction"}
+      </button>
+    </form>
+  );
+}
+
+function ChipEditor({
+  suggested,
+  selected,
+  onChange,
+}: {
+  suggested: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [value, setValue] = useState("");
+
+  function toggle(tag: string) {
+    onChange(selected.includes(tag) ? selected.filter((x) => x !== tag) : [...selected, tag]);
+  }
+
+  function addCustom() {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (!selected.includes(trimmed)) onChange([...selected, trimmed]);
+    setValue("");
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
+        {Array.from(new Set([...suggested, ...selected])).map((tag) => {
+          const active = selected.includes(tag);
+          return (
+            <button
+              type="button"
+              key={tag}
+              onClick={() => toggle(tag)}
+              style={{
+                padding: "var(--space-1) var(--space-3)",
+                borderRadius: "var(--radius-pill)",
+                border: `1px solid ${active ? "var(--color-accent)" : "var(--color-border)"}`,
+                background: active ? "var(--color-accent)" : "transparent",
+                color: active ? "#fff" : "var(--color-text-secondary)",
+                fontSize: "0.8rem",
+                cursor: "pointer",
+              }}
+            >
+              {tag}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+        <input
+          placeholder="Custom tag…"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addCustom();
+            }
+          }}
+          style={{ ...inputStyle, width: "auto", flex: "1 1 200px" }}
+        />
+        <button type="button" onClick={addCustom} style={smallButtonStyle}>
+          + Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ActivationForm({ onAdd }: { onAdd: (payload: VenueActivationCreate) => Promise<void> }) {
+  const [clientName, setClientName] = useState("");
+  const [clientCategory, setClientCategory] = useState("");
+  const [eventType, setEventType] = useState("");
+  const [eventDate, setEventDate] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!clientName.trim()) return;
+    setAdding(true);
+    await onAdd({
+      client_name: clientName.trim(),
+      client_category: clientCategory.trim() || null,
+      event_type: eventType.trim() || null,
+      event_date: eventDate || null,
+    });
+    setClientName("");
+    setClientCategory("");
+    setEventType("");
+    setEventDate("");
+    setAdding(false);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+      <input
+        placeholder="Client name"
+        value={clientName}
+        onChange={(e) => setClientName(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "2 1 160px" }}
+      />
+      <input
+        placeholder="Category (e.g. Maison)"
+        value={clientCategory}
+        onChange={(e) => setClientCategory(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "1 1 120px" }}
+      />
+      <input
+        placeholder="Event type (e.g. Garden dinner)"
+        value={eventType}
+        onChange={(e) => setEventType(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "2 1 160px" }}
+      />
+      <input
+        type="date"
+        value={eventDate}
+        onChange={(e) => setEventDate(e.target.value)}
+        style={{ ...inputStyle, width: "auto" }}
+      />
+      <button type="submit" disabled={adding} style={smallButtonStyle}>
+        {adding ? "Adding…" : "Add past event"}
+      </button>
+    </form>
+  );
+}
+
+function FilmForm({ onAdd }: { onAdd: (payload: VenueFilmCreate) => Promise<void> }) {
+  const [title, setTitle] = useState("");
+  const [duration, setDuration] = useState("");
+  const [status, setStatus] = useState<FilmStatus>("planned");
+  const [adding, setAdding] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim()) return;
+    setAdding(true);
+    await onAdd({ title: title.trim(), duration_label: duration.trim() || null, status });
+    setTitle("");
+    setDuration("");
+    setStatus("planned");
+    setAdding(false);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+      <input
+        placeholder="Film title (e.g. Arrival by sampan)"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "2 1 200px" }}
+      />
+      <input
+        placeholder="Duration (e.g. 0:24)"
+        value={duration}
+        onChange={(e) => setDuration(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "1 1 100px" }}
+      />
+      <select value={status} onChange={(e) => setStatus(e.target.value as FilmStatus)} style={{ ...inputStyle, width: "auto" }}>
+        {Object.entries(FILM_STATUS_LABEL).map(([value, label]) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </select>
+      <button type="submit" disabled={adding} style={smallButtonStyle}>
+        {adding ? "Adding…" : "Add film"}
+      </button>
+    </form>
+  );
+}
+
+function TeamContactForm({ onAdd }: { onAdd: (payload: VenueTeamContactCreate) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [role, setRole] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !role.trim()) return;
+    setAdding(true);
+    await onAdd({
+      name: name.trim(),
+      role: role.trim(),
+      phone: phone.trim() || null,
+      email: email.trim() || null,
+    });
+    setName("");
+    setRole("");
+    setPhone("");
+    setEmail("");
+    setAdding(false);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+      <input
+        placeholder="Name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "1 1 140px" }}
+      />
+      <input
+        placeholder="Role (e.g. Account Director)"
+        value={role}
+        onChange={(e) => setRole(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "1 1 160px" }}
+      />
+      <input
+        placeholder="Phone (optional)"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "1 1 140px" }}
+      />
+      <input
+        placeholder="Email (optional)"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        style={{ ...inputStyle, width: "auto", flex: "1 1 180px" }}
+      />
+      <button type="submit" disabled={adding} style={smallButtonStyle}>
+        {adding ? "Adding…" : "Add contact"}
       </button>
     </form>
   );

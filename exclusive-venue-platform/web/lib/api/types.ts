@@ -1,4 +1,10 @@
 export type VenueStatus = "draft" | "pending_approval" | "active" | "inactive";
+export type VenueCategory =
+  | "event_space"
+  | "private_property"
+  | "commercial_space"
+  | "boats_yachts"
+  | "member_club";
 export type MediaKind = "photo" | "video" | "floor_plan";
 export type RestrictionKind =
   | "no_amplified_music"
@@ -16,6 +22,14 @@ export interface Venue {
   description: string | null;
   address: string | null;
   district: string | null;
+  category: VenueCategory | null;
+  amenities: string[];
+  ideal_for: string[];
+  accepted_event_types: string[];
+  surface_area_sqft: number | null;
+  room_count: number | null;
+  access_note: string | null;
+  view_note: string | null;
   landlord_id: string | null;
   status: VenueStatus;
   approved_by: string | null;
@@ -57,6 +71,14 @@ export interface VenueCreate {
   description?: string | null;
   address?: string | null;
   district?: string | null;
+  category?: VenueCategory | null;
+  amenities?: string[];
+  ideal_for?: string[];
+  accepted_event_types?: string[];
+  surface_area_sqft?: number | null;
+  room_count?: number | null;
+  access_note?: string | null;
+  view_note?: string | null;
   status?: VenueStatus;
 }
 
@@ -66,8 +88,50 @@ export interface VenueUpdate {
   description?: string | null;
   address?: string | null;
   district?: string | null;
+  category?: VenueCategory | null;
+  amenities?: string[];
+  ideal_for?: string[];
+  accepted_event_types?: string[];
+  surface_area_sqft?: number | null;
+  room_count?: number | null;
+  access_note?: string | null;
+  view_note?: string | null;
   status?: VenueStatus;
 }
+
+export const VENUE_CATEGORY_LABEL: Record<VenueCategory, string> = {
+  event_space: "Event space",
+  private_property: "Private property",
+  commercial_space: "Commercial space",
+  boats_yachts: "Boats & yachts",
+  member_club: "Member club",
+};
+
+export const VENUE_CATEGORIES: VenueCategory[] = [
+  "event_space",
+  "private_property",
+  "commercial_space",
+  "boats_yachts",
+  "member_club",
+];
+
+// Curated starting chips (operators can add custom tags freely too) — a
+// venue-agnostic default set covering the amenities that recur across the
+// existing demo portfolio (AV, outdoor space, harbour views, accessibility).
+export const SUGGESTED_VENUE_AMENITIES: string[] = [
+  "AV equipment",
+  "Sound system",
+  "Dance floor",
+  "Outdoor space",
+  "Rooftop",
+  "Harbour view",
+  "Natural light",
+  "Private entrance",
+  "Catering kitchen",
+  "Bridal suite",
+  "Parking",
+  "Wheelchair accessible",
+];
 
 export interface VenueConfigurationCreate {
   name: string;
@@ -122,6 +186,102 @@ export interface VenueWithPortfolio extends Venue {
   venue_media: VenueMedia[];
   venue_configurations: VenueConfiguration[];
 }
+
+export interface VenueActivation {
+  id: string;
+  venue_id: string;
+  client_name: string;
+  client_category: string | null;
+  event_type: string | null;
+  event_date: string | null;
+  sort_order: number;
+}
+
+export interface VenueActivationCreate {
+  client_name: string;
+  client_category?: string | null;
+  event_type?: string | null;
+  event_date?: string | null;
+  sort_order?: number;
+}
+
+export type FilmStatus = "planned" | "in_production" | "delivered";
+
+export const FILM_STATUS_LABEL: Record<FilmStatus, string> = {
+  planned: "Planned",
+  in_production: "In production",
+  delivered: "Delivered",
+};
+
+export interface VenueFilm {
+  id: string;
+  venue_id: string;
+  title: string;
+  duration_label: string | null;
+  status: FilmStatus;
+  video_media_id: string | null;
+  video_url: string | null;
+  sort_order: number;
+}
+
+export interface VenueFilmCreate {
+  title: string;
+  duration_label?: string | null;
+  status?: FilmStatus;
+  video_media_id?: string | null;
+  sort_order?: number;
+}
+
+export interface VenueTeamContact {
+  id: string;
+  venue_id: string;
+  name: string;
+  role: string;
+  phone: string | null;
+  email: string | null;
+  sort_order: number;
+}
+
+export interface VenueTeamContactCreate {
+  name: string;
+  role: string;
+  phone?: string | null;
+  email?: string | null;
+  sort_order?: number;
+}
+
+export interface VenueWithProfile extends Venue {
+  venue_media: VenueMedia[];
+  venue_configurations: VenueConfiguration[];
+  venue_activations: VenueActivation[];
+  venue_films: VenueFilm[];
+  venue_team_contacts: VenueTeamContact[];
+}
+
+// Curated starting chips, same spirit as SUGGESTED_VENUE_AMENITIES —
+// suggestions only, operators can add anything.
+export const SUGGESTED_IDEAL_FOR: string[] = [
+  "1-on-1 appointment",
+  "Private dinner",
+  "Cocktail party",
+  "Product launch",
+  "Photoshoot",
+  "Filming & shooting",
+  "Wedding",
+  "VIP reception",
+];
+
+export const SUGGESTED_ACCEPTED_EVENT_TYPES: string[] = [
+  "1-on-1 appointment",
+  "Cocktail party",
+  "Filming & shooting",
+  "Photoshoot",
+  "Private function / celebration",
+  "Product launch",
+  "Sit-down dinner",
+  "Staycation",
+  "Tradeshow",
+];
 
 // --- Enquiry intake (C1) ---------------------------------------------
 

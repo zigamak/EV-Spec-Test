@@ -21,6 +21,7 @@ from app.routers import (
     public_proposals,
     recommendations,
     venue_media,
+    venue_profile,
     venues,
     webhooks,
 )
@@ -57,6 +58,7 @@ app.add_middleware(
 
 app.include_router(venues.router)
 app.include_router(venue_media.router)
+app.include_router(venue_profile.router)
 app.include_router(enquiries.router)
 app.include_router(briefs.router)
 app.include_router(pricing.router)
