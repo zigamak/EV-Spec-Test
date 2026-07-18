@@ -10,8 +10,20 @@ export function slugify(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/** The calendar date `d` represents in *local* wall-clock time, as
+ * YYYY-MM-DD. Deliberately not `d.toISOString().slice(0, 10)` — that
+ * converts to UTC first, which silently shifts the date back a day for
+ * any positive UTC offset (Hong Kong, UTC+8; British Summer Time, UTC+1)
+ * whenever `d` was built from local components (`new Date()`, or
+ * `new Date(year, month, day)` as every calendar grid here does) — found
+ * 19 Jul when a July 22 enquiry rendered under the 23rd on the portfolio
+ * calendar. starts_on/ends_on are DATE columns, not instants, so the
+ * local calendar day is the only day that's ever meant. */
 export function toIsoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 // A small fixed palette (matches the sidebar's navy/red brand colors plus

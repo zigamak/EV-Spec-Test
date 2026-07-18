@@ -20,8 +20,14 @@ describe("slugify", () => {
 });
 
 describe("toIsoDate", () => {
-  it("formats a UTC date as YYYY-MM-DD", () => {
-    expect(toIsoDate(new Date(Date.UTC(2026, 5, 15)))).toBe("2026-06-15");
+  it("formats a local date as YYYY-MM-DD", () => {
+    expect(toIsoDate(new Date(2026, 5, 15))).toBe("2026-06-15");
+  });
+
+  it("does not shift the date under a positive UTC offset (e.g. Hong Kong, UTC+8)", () => {
+    // Local midnight on the 23rd is 16:00 UTC on the 22nd — a naive
+    // toISOString().slice(0, 10) would report "22", not "23".
+    expect(toIsoDate(new Date(2026, 6, 23, 0, 0, 0))).toBe("2026-07-23");
   });
 });
 
