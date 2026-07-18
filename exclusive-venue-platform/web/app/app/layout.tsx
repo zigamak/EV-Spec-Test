@@ -33,7 +33,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
         href: "/app/enquiries",
         match: (p) => p.startsWith("/app/enquiries"),
       },
-      { label: "Proposals" },
+      { label: "Proposals", href: "/app/proposals" },
       { label: "Pipeline", href: "/app", match: (p) => p === "/app" },
       { label: "Clients", href: "/app/clients" },
       { label: "Contacts" },

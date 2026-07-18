@@ -77,7 +77,22 @@ def list_proposals(client: ScopedClient, _: Staff, enquiry_id: UUID | None = Non
 
 @router.post("/proposals", response_model=Proposal, status_code=status.HTTP_201_CREATED)
 def create_proposal(payload: ProposalCreate, client: ScopedClient, staff: Staff):
-    body = {**payload.model_dump(mode="json", exclude_none=True), "created_by": staff.user_id}
+    # Version within the enquiry: next after the highest existing (v1, v2, …).
+    existing = (
+        client.table("proposals")
+        .select("version")
+        .eq("enquiry_id", str(payload.enquiry_id))
+        .order("version", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_version = (existing.data[0]["version"] + 1) if existing.data else 1
+
+    body = {
+        **payload.model_dump(mode="json", exclude_none=True),
+        "created_by": staff.user_id,
+        "version": next_version,
+    }
     try:
         result = client.table("proposals").insert(body).execute()
     except APIError as exc:

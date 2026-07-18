@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiDownload, apiFetch, ApiError } from "@/lib/api/client";
 import type {
   Brief,
@@ -98,7 +98,11 @@ function budgetLine(brief: Brief | null): string | null {
 export default function ProposalBuilderPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const enquiryId = searchParams.get("enquiry");
+  const enquiryParam = searchParams.get("enquiry");
+  const proposalParam = searchParams.get("proposal");
+  // Resolved once loaded — either from ?enquiry, or from the proposal's own
+  // enquiry_id when opened via ?proposal={id}.
+  const [enquiryId, setEnquiryId] = useState<string | null>(enquiryParam);
 
   const [enquiry, setEnquiry] = useState<Enquiry | null>(null);
   const [brief, setBrief] = useState<Brief | null>(null);
@@ -131,35 +135,61 @@ export default function ProposalBuilderPage() {
   const [generatingEmail, setGeneratingEmail] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
+  // Guards against creating duplicate drafts. Set synchronously before any
+  // await, so a second concurrent call (React StrictMode double-fires effects
+  // in dev; a double-click could too) sees the enquiry is already being
+  // handled and bails — the cause of the duplicate drafts seen in the list.
+  const draftInitRef = useRef<string | null>(null);
+
   const ensureDraftProposal = useCallback(
     async (enq: Enquiry, latestBrief: Brief, orgName: string | null) => {
-      const existing = await apiFetch<Proposal[]>(`/proposals?enquiry_id=${enq.id}`);
-      const draft = existing.find((p) => p.status === "draft");
-      if (draft) {
-        setProposal(draft);
-        return;
+      if (draftInitRef.current === enq.id) return;
+      draftInitRef.current = enq.id;
+      try {
+        const existing = await apiFetch<Proposal[]>(`/proposals?enquiry_id=${enq.id}`);
+        // Newest draft first (the list is created_at desc) — reuse ONE draft
+        // per enquiry. A sent proposal is never reused, so building again
+        // after sending starts a fresh proposal (versioning).
+        const draft = existing.find((p) => p.status === "draft");
+        if (draft) {
+          setProposal(draft);
+          return;
+        }
+        const title = `${orgName ?? "Proposal"} · ${latestBrief.event_type ?? "event"}`;
+        const created = await apiFetch<Proposal>("/proposals", {
+          method: "POST",
+          body: JSON.stringify({ enquiry_id: enq.id, brief_id: latestBrief.id, title }),
+        });
+        setProposal(created);
+      } catch (err) {
+        draftInitRef.current = null; // allow a retry on failure
+        throw err;
       }
-      const title = `${orgName ?? "Proposal"} · ${latestBrief.event_type ?? "event"}`;
-      const created = await apiFetch<Proposal>("/proposals", {
-        method: "POST",
-        body: JSON.stringify({ enquiry_id: enq.id, brief_id: latestBrief.id, title }),
-      });
-      setProposal(created);
     },
     [],
   );
 
   const load = useCallback(async () => {
-    if (!enquiryId) {
-      setError("No enquiry specified.");
-      return;
-    }
     setError(null);
     try {
-      const enq = await apiFetch<Enquiry>(`/enquiries/${enquiryId}`);
+      // Opened on an existing proposal (?proposal={id}) → load it and use its
+      // enquiry. Otherwise start from ?enquiry={id} and reuse/create a draft.
+      let eid = enquiryParam;
+      let existingProposal: Proposal | null = null;
+      if (proposalParam) {
+        existingProposal = await apiFetch<Proposal>(`/proposals/${proposalParam}`);
+        eid = existingProposal.enquiry_id;
+      }
+      if (!eid) {
+        setError("No enquiry or proposal specified.");
+        return;
+      }
+      setEnquiryId(eid);
+
+      const enq = await apiFetch<Enquiry>(`/enquiries/${eid}`);
       setEnquiry(enq);
 
-      const briefs = await apiFetch<Brief[]>(`/enquiries/${enquiryId}/briefs`);
+      const briefs = await apiFetch<Brief[]>(`/enquiries/${eid}/briefs`);
       const latest = [...briefs].sort((a, b) => b.version - a.version)[0] ?? null;
       setBrief(latest);
 
@@ -175,14 +205,17 @@ export default function ProposalBuilderPage() {
         }
       }
 
-      // A draft proposal is the autosave target — only creatable once a
-      // brief exists (proposals.brief_id is required), so Step 1 can parse
-      // first and create the draft once there's something to pin.
-      if (latest) await ensureDraftProposal(enq, latest, orgName);
+      if (existingProposal) {
+        setProposal(existingProposal);
+      } else if (latest) {
+        // The draft is the autosave target — only creatable once a brief
+        // exists (proposals.brief_id is required).
+        await ensureDraftProposal(enq, latest, orgName);
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to load the enquiry.");
+      setError(err instanceof ApiError ? err.message : "Failed to load the proposal.");
     }
-  }, [enquiryId, ensureDraftProposal]);
+  }, [enquiryParam, proposalParam, ensureDraftProposal]);
 
   useEffect(() => {
     load();
@@ -282,11 +315,18 @@ export default function ProposalBuilderPage() {
 
   // Keep Step 4's editable copy + status in sync when the draft loads/changes.
   useEffect(() => {
-    if (proposal) {
-      setIntroCopy(proposal.intro_copy ?? "");
-      setEmailCopy(proposal.personal_email_copy ?? "");
-      setProposalStatus(proposal.status);
-    }
+    if (!proposal) return;
+    setIntroCopy(proposal.intro_copy ?? "");
+    setEmailCopy(proposal.personal_email_copy ?? "");
+    setProposalStatus(proposal.status);
+    // Reload any existing shareable link so it survives reloads/revisits
+    // (it was only ever held in local state before → looked "not saved").
+    apiFetch<ProposalLinkToken[]>(`/proposals/${proposal.id}/links`)
+      .then((links) => {
+        const active = links.find((l) => !l.revoked);
+        if (active) setShareToken(active.token);
+      })
+      .catch(() => {});
   }, [proposal]);
 
   async function overrideTotal(pv: ProposalVenue, value: number) {

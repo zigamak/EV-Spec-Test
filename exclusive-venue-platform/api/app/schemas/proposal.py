@@ -46,6 +46,7 @@ class Proposal(BaseModel):
     id: UUID
     enquiry_id: UUID
     brief_id: UUID
+    version: int
     status: ProposalStatus
     title: str
     intro_copy: str | None

@@ -450,6 +450,7 @@ export interface Proposal {
   id: string;
   enquiry_id: string;
   brief_id: string;
+  version: number;
   status: ProposalStatus;
   title: string;
   intro_copy: string | null;
@@ -510,4 +511,25 @@ export interface ProposalLinkToken {
   token: string;
   expires_at: string;
   revoked: boolean;
+}
+
+// Public (unauthenticated) proposal view — the narrowed shape returned by
+// GET /public/proposals/{token} for the shareable client-facing page.
+export interface PublicProposalVenue {
+  venue_id: string;
+  venue_name: string;
+  configuration_name: string;
+  quote_total: number;
+  venue_copy: string | null;
+  sort_order: number;
+  recommended: boolean;
+}
+
+export interface PublicProposal {
+  title: string;
+  intro_copy: string | null;
+  legal_boilerplate: string | null;
+  currency: string;
+  status: string;
+  venues: PublicProposalVenue[];
 }
