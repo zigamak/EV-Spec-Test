@@ -17,6 +17,7 @@ from supabase import Client
 
 from app.core.auth import StaffUser, require_staff_session
 from app.core.scoped_client import get_scoped_client
+from app.schemas.activity import ActivityLog
 from app.schemas.enquiry import (
     Contact,
     ContactCreate,
@@ -30,7 +31,13 @@ from app.schemas.enquiry import (
     OrganisationCreate,
     OrganisationUpdate,
 )
-from app.services.stage_machine import InvalidTransition, validate_transition
+from app.services.activity_log import log_activity
+from app.services.stage_machine import (
+    STAGE_TO_STATUS,
+    EnquiryStatus,
+    InvalidTransition,
+    validate_transition,
+)
 
 router = APIRouter(tags=["enquiries"])
 
@@ -164,16 +171,26 @@ def list_enquiries(
     client: ScopedClient,
     _: Staff,
     stage: EnquiryStage | None = None,
+    pipeline_status: EnquiryStatus | None = None,
     assigned_to: UUID | None = None,
 ):
     """Embeds every brief version per enquiry via PostgREST's relationship
     syntax (`briefs(*)`) in the same round trip — avoids callers looping
     back with one `GET .../briefs` per enquiry (found live 16 Jul as one
     of the two worst N+1 offenders alongside the Calendar venue/availability
-    loop). Callers should pick the highest `version` themselves."""
+    loop). Callers should pick the highest `version` themselves.
+
+    `pipeline_status` (added 18 Jul, H3) filters by the Open/Awaiting/Won/
+    Lost rollup — translated to the matching set of real `stage` values
+    before hitting Postgres, since it isn't a stored column (erd.md §5.1).
+    Named to avoid shadowing FastAPI's `status` (HTTP status codes) import
+    used elsewhere in this router."""
     query = client.table("enquiries").select("*, briefs(*)").order("created_at", desc=True)
     if stage:
         query = query.eq("stage", stage)
+    if pipeline_status:
+        matching_stages = [s for s, st in STAGE_TO_STATUS.items() if st == pipeline_status]
+        query = query.in_("stage", matching_stages)
     if assigned_to:
         query = query.eq("assigned_to", str(assigned_to))
     try:
@@ -215,7 +232,7 @@ def get_enquiry(enquiry_id: UUID, client: ScopedClient, _: Staff):
 
 
 @router.patch("/enquiries/{enquiry_id}", response_model=Enquiry)
-def update_enquiry(enquiry_id: UUID, payload: EnquiryUpdate, client: ScopedClient, _: Staff):
+def update_enquiry(enquiry_id: UUID, payload: EnquiryUpdate, client: ScopedClient, staff: Staff):
     body = payload.model_dump(mode="json", exclude_none=True)
     if not body:
         return _get_enquiry_or_404(client, enquiry_id)
@@ -225,7 +242,41 @@ def update_enquiry(enquiry_id: UUID, payload: EnquiryUpdate, client: ScopedClien
         _raise_for_postgrest(exc)
     if not result.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Enquiry not found")
+
+    # Audit: a forward is the notable case; anything else is a generic edit.
+    forwarded = "forwarded_to" in body
+    log_activity(
+        client,
+        action="enquiry.forwarded" if forwarded else "enquiry.updated",
+        actor_type="human",
+        actor_id=staff.user_id,
+        actor_label=staff.email,
+        entity_type="enquiry",
+        entity_id=str(enquiry_id),
+        enquiry_id=str(enquiry_id),
+        summary=(
+            f"Forwarded to {body['forwarded_to']}" if forwarded else f"Updated {', '.join(body)}"
+        ),
+        metadata={"changed": body},
+    )
     return result.data[0]
+
+
+@router.get("/enquiries/{enquiry_id}/activity", response_model=list[ActivityLog])
+def list_enquiry_activity(enquiry_id: UUID, client: ScopedClient, _: Staff):
+    """The enquiry's audit timeline (task K1) — every AI and human action on
+    it, newest first, including errors. RLS gates read access to staff."""
+    try:
+        result = (
+            client.table("activity_log")
+            .select("*")
+            .eq("enquiry_id", str(enquiry_id))
+            .order("created_at", desc=True)
+            .execute()
+        )
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return result.data
 
 
 class StageTransitionRequest(BaseModel):
@@ -243,7 +294,7 @@ def transition_enquiry(
 ):
     """Task H1's stage machine. The only sanctioned way to move an
     enquiry's stage — validated against ALLOWED_TRANSITIONS before ever
-    reaching Postgres, so an invalid jump (e.g. new -> confirmed) is
+    reaching Postgres, so an invalid jump (e.g. enquiry -> signed) is
     rejected here with a clear 409, not a confusing CHECK-constraint
     error from the DB."""
     current = _get_enquiry_or_404(client, enquiry_id)

@@ -46,29 +46,13 @@ async def log_unhandled_exceptions(request: Request, exc: Exception) -> JSONResp
 # config, not hardcoded here.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"] if get_settings().environment == "development" else [],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"]
+    if get_settings().environment == "development"
+    else [],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.middleware("http")
-async def close_connections_in_dev(request, call_next):
-    """Dev-only workaround for a real bug: uvicorn --reload on Windows
-    occasionally lets a CORS preflight succeed but then silently drops the
-    real request that follows on the same reused keep-alive connection —
-    the browser just hangs waiting. Forcing `Connection: close` tells the
-    browser to never reuse the connection, so there's nothing to go stale.
-    Confirmed live: pages that fire several sequential requests (Calendar,
-    the proposal editor) stopped hanging entirely once this was added.
-    Not needed in production (a real deployment sits behind a proper
-    reverse proxy, not uvicorn's dev reloader).
-    """
-    response = await call_next(request)
-    if get_settings().environment == "development":
-        response.headers["Connection"] = "close"
-    return response
 
 
 app.include_router(venues.router)

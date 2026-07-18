@@ -138,6 +138,42 @@
       form (all fields), "Parse with AI"/"Re-parse" trigger, "Approve
       as-is". Degrades to a clear notice (not a crash) when parsing is
       unavailable. Browser-verified.
+- [x] D5. (added 18 Jul, after live-browsing the reference prototype's
+      actual Concierge briefing UI — real Dior enquiry, "9 fields, 1
+      flagged", client tier + rate card, a date window with suggested
+      dates, a TBC budget with an estimated range, mood/format/tech
+      needs) Standardize the brief contract into one shape every intake
+      channel targets — email, WhatsApp, or a manual note through the AI
+      parser; the eventual public web form (C2) filling it directly,
+      deterministically, no AI involved. See
+      0000-foundation/erd.md §5.2 for the full field-by-field writeup and
+      an example payload.  [D1]
+      — **Alembic revision 0008** (ALTER only, does not edit 0004 — see
+      constitution rule #8): `briefs.event_date` renamed to
+      `date_window_start`, new `date_window_end`, `date_suggestions`,
+      `time_of_day`, `budget_status`, `budget_estimate_low/high`,
+      `flagged_fields`, `fields_to_confirm`; `enquiries.channel` and
+      `contacts.source` gain `'whatsapp'`; `organisations` gains `tier`,
+      `rate_card_on_file`, `rate_card_terms`, `region`; `proposals` gains
+      `event_date` (the locked date, distinct from the brief's window)
+      and `personal_email_copy` (the AI-drafted note that accompanies a
+      sent proposal, separate from `intro_copy`). `app/schemas/brief.py`
+      (`ParsedBrief`/`BriefUpdate`/`Brief`) rewritten with two new
+      model-level validators (date window order, budget estimate range
+      both-or-neither) — both unit-verified directly. `brief_parser.py`'s
+      `EXTRACT_BRIEF_TOOL` rewritten to target the new fields.
+      `routers/recommendations.py` and `routers/proposals.py` updated for
+      the renamed column (shortlisting/pricing use `date_window_start` as
+      the effective single date until a proposal locks a real one).
+      `web/lib/api/types.ts` and every frontend reference to
+      `brief.event_date` (Pipeline Board, Calendar, Command Center)
+      updated to match. `scripts/seed_demo_enquiries.py` updated —
+      the Luxe & Co. entry is now a full standardized-brief showcase
+      (tier, rate card, date window + suggestions, TBC budget + estimate,
+      mood/format/tech needs, flagged fields) plus a WhatsApp-channel
+      entry proving the contract really is channel-agnostic.
+      **Not yet applied to any live database** — same caveat as 0007, no
+      Supabase credentials in this environment.
 
 ## E. Recommendation Engine
 - [x] E1. Deterministic filter: capacity + availability + restrictions +
@@ -251,21 +287,41 @@
 - [ ] G5. Tokenized shareable link page (public read-only)  [G3; Tier-2 gate]
       — the data endpoint it needs (`GET /public/proposals/{token}`) already
       exists from G1; only the actual page UI is left, gated on the brand kit anyway.
+- [~] G6. Guided 4-step Proposal Builder (reference "Inquiry → Proposal"
+      workflow) at `/app/proposals/new?enquiry={id}` — a wizard over the
+      already-built endpoints (no new API), with a draft proposal as the
+      autosave target. Entered from the Inquiries inbox "Build proposal".  [G0–G3]
+      — **Step 1 (The Enquiry) DONE**: raw email + structured briefing card
+      (confidence, flagged/to-confirm, mood/format/tech, TBC budget), re-parse.
+      — **Step 2 (Curate venues) DONE**: portfolio grid + "Fits brief"
+      shortlist, 1–5 pick persisted to proposal_venues on toggle. Category
+      ribbon deferred (no venue `category` column yet).
+      — **Step 3 (Generate pricing) PENDING**: per-venue quote breakdown from
+      each proposal_venue's stored `quote_breakdown`/`quote_total`, with a
+      manual override (`PATCH /proposals/{id}/venues/{pv}`). Endpoints exist.
+      — **Step 4 (Generate & share) PENDING**: intro copy
+      (`generate-intro-copy`) + shareable web link (`/links`). PDF stays G4.
+      Endpoints exist; only the screens are left.
 
 ## H. CRM Pipeline
-- [x] H1. Stage machine: new → qualified → proposal sent → follow_up → visit →
-      negotiation → confirmed; assignment. (follow_up and visit are status
-      labels only — no scheduling/reminder logic in this build). Uses
-      enquiries.stage from revision 0003 — if the stage list needs to change
-      from what 0003 shipped, that's a new ALTER revision, not an edit to
-      0003.  [C1]
+- [x] H1. Stage machine: Enquiry → Briefed → Proposed → Held → Signed;
+      `held` can lapse back to `proposed`; `lost` reachable from any
+      non-terminal stage; assignment. Originally shipped 12 Jul against
+      revision 0003's 8-value stage list (new/qualified/proposal_sent/
+      follow_up/visit/negotiation/confirmed/lost); **revamped 18 Jul to the
+      5-stage model above** via a new ALTER revision (0007) rather than an
+      edit to 0003 — see H3 and 0000-foundation/erd.md §5.1.  [C1]
       — `app/services/stage_machine.py` (deterministic transition graph,
-      `lost` reachable from any non-terminal stage, `confirmed`/`lost` both
-      terminal) + `POST /enquiries/{id}/transition` (409 on an invalid jump,
-      422 if moving to `lost` with no `lost_reason`) + `POST /enquiries/
-      {id}/assign`. Deliberately removed `stage` from the plain `PATCH
-      /enquiries/{id}` payload so the transition endpoint is the only path
-      that can change it. 7 unit tests + live verification.
+      `lost` reachable from any non-terminal stage, `signed`/`lost` both
+      terminal, `held → proposed` as the hold-lapse case) + `POST /enquiries/
+      {id}/transition` (409 on an invalid jump, 422 if moving to `lost` with
+      no `lost_reason`) + `POST /enquiries/{id}/assign`. Deliberately
+      removed `stage` from the plain `PATCH /enquiries/{id}` payload so the
+      transition endpoint is the only path that can change it. 13 unit
+      tests (rewritten 18 Jul for the 5-stage model) + live verification of
+      the original 8-stage version (5-stage version not yet run against a
+      live Supabase project — migration 0007 hasn't been applied anywhere
+      live; see H4).
 - [x] H2. Staff UI: kanban board by stage + enquiry detail. Board cards must
       surface event type, guest count, date, budget, and proposed venue(s)
       per enquiry — not just a bare stage/name list  [H1, D4]
@@ -274,6 +330,43 @@
       event_date/budget from each enquiry's latest brief. "Enquiry detail"
       half of this task was folded into G0's command center rather than
       a separate page. Browser-verified.
+- [~] H3. (added 18 Jul — resolves the stage-model conflict documented in
+      0000-foundation/erd.md §5.1) Auto-couple proposal send → enquiry
+      stage transition: when a proposal's `status` flips to `sent` (G3's
+      "Mark as sent"), call `POST /enquiries/{id}/transition` to
+      `proposed` server-side instead of requiring two separate staff
+      actions. Also add a status-rollup helper (Open/Awaiting/Won/Lost,
+      computed from `stage`, never stored) for Pipeline Board grouping —
+      no new column, no migration.  [G3, H1]
+      — **Status-rollup shipped (18 Jul):** `stage_to_status()` in
+      `stage_machine.py`, computed `status` field on every Enquiry
+      response, `pipeline_status` filter on `GET /enquiries`, Pipeline
+      Board summary pills. Auto-coupling proposal-send → transition still
+      not done — tracked as the remaining open half of this task.
+      **Decision made and executed (18 Jul, same day):** fuller workflow
+      context supplied by the user confirmed the 5-stage Kanban (Enquiry →
+      Briefed → Proposed → Held → Signed) as the actual intended pipeline,
+      replacing (not just relabeling) this build's original 8 granular
+      stages. Full revamp carried out same day: stage_machine.py's
+      transition graph rewritten (13 unit tests), enquiry.py schema/
+      routers updated, migration 0007 written (see H4), web/lib/api/
+      types.ts + Pipeline Board updated, seed script rewritten for the
+      new stage names. See H4 and 0000-foundation/erd.md §5.1 for the
+      full account.
+- [x] H4. (added 18 Jul, part of the H3 stage revamp) Migration
+      `0007_enquiry_stage_revamp.py`: ALTER-only revision (new file, does
+      not edit 0003 per the immutable-revision rule) that remaps existing
+      rows from the 8 old stage values to the 5 new ones + lost, drops the
+      old unnamed CHECK constraint via a dynamic `pg_constraint` lookup
+      (not a hardcoded guessed name), adds an explicitly-named
+      `enquiries_stage_check` CHECK with the 6 new values, and sets the
+      column default to `'enquiry'`. Includes a documented (lossy)
+      `downgrade()`.  [H1]
+      — Written and reviewed, ruff clean. **Not yet applied to any live
+      database** — no Supabase credentials available in this environment.
+      Must be run via `alembic upgrade head` against the real project
+      before the 5-stage code above or `scripts/seed_demo_enquiries.py`
+      will work against live data.
 
 ## I. Verification
 - [x] I1. Wire full suite into ci.yml (Vitest + pytest + golden set). CI runs

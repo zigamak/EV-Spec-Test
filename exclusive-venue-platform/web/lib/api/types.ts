@@ -126,48 +126,84 @@ export interface VenueWithPortfolio extends Venue {
 // --- Enquiry intake (C1) ---------------------------------------------
 
 export type OrganisationKind = "corporate" | "agency" | "brand" | "production_house" | "other";
-export type ContactSource = "email" | "web_form" | "concierge" | "manual";
-export type EnquiryChannel = "email" | "web_form" | "manual" | "concierge";
-export type EnquiryStage =
-  | "new"
-  | "qualified"
-  | "proposal_sent"
-  | "follow_up"
-  | "visit"
-  | "negotiation"
-  | "confirmed"
-  | "lost";
+// Added 18 Jul (task D5) — client-context tier, mirrors the reference
+// prototype's "Tier-1 · Maison" badge. Lifetime value / win rate / open-
+// proposal count are NOT typed here — computed server-side, not stored.
+export type OrganisationTier = "tier-1" | "tier-2" | "standard";
+// 'whatsapp' added 18 Jul (task D5) — the standardized brief contract is
+// channel-agnostic, so every intake channel needs to be a real value here
+// rather than falling back to 'manual' or 'other'.
+export type ContactSource = "email" | "web_form" | "concierge" | "manual" | "whatsapp";
+export type EnquiryChannel = "email" | "web_form" | "manual" | "concierge" | "whatsapp";
+// Revamped 18 Jul (task H3) — 5-stage Kanban (Enquiry -> Briefed ->
+// Proposed -> Held -> Signed) matching the full Inquiries -> Proposal ->
+// Pipeline -> Client workflow, replacing the earlier 8-stage model.
+// Mirrors api/app/services/stage_machine.py and
+// migrations/versions/0007_enquiry_stage_revamp.py.
+export type EnquiryStage = "enquiry" | "briefed" | "proposed" | "held" | "signed" | "lost";
 
-export const ENQUIRY_STAGES: EnquiryStage[] = [
-  "new",
-  "qualified",
-  "proposal_sent",
-  "follow_up",
-  "visit",
-  "negotiation",
-  "confirmed",
-];
+export const ENQUIRY_STAGES: EnquiryStage[] = ["enquiry", "briefed", "proposed", "held", "signed"];
 
 export const STAGE_LABEL: Record<EnquiryStage, string> = {
-  new: "New",
-  qualified: "Qualified",
-  proposal_sent: "Proposal sent",
-  follow_up: "Follow up",
-  visit: "Visit",
-  negotiation: "Negotiation",
-  confirmed: "Confirmed",
+  enquiry: "Enquiry",
+  briefed: "Briefed",
+  proposed: "Proposed",
+  held: "Held",
+  signed: "Signed",
   lost: "Lost",
+};
+
+// Status rollup (task H3, added/revised 18 Jul — erd.md §5.1). Reconciles
+// the 5-stage Kanban above with the salesperson-facing Open/Awaiting/Won/
+// Lost view from the fuller workflow description. Computed server-side
+// (`Enquiry.status` in api/app/schemas/enquiry.py) from `stage` — never a
+// separate field you set yourself, just mirrored here for the UI's own
+// grouping/labels.
+export type EnquiryStatus = "open" | "awaiting" | "won" | "lost";
+
+export const STAGE_TO_STATUS: Record<EnquiryStage, EnquiryStatus> = {
+  enquiry: "open",
+  briefed: "open",
+  proposed: "awaiting",
+  held: "awaiting",
+  signed: "won",
+  lost: "lost",
+};
+
+export const STATUS_LABEL: Record<EnquiryStatus, string> = {
+  open: "Open",
+  awaiting: "Awaiting",
+  won: "Won",
+  lost: "Lost",
+};
+
+export const STATUS_COLOR: Record<EnquiryStatus, string> = {
+  open: "var(--color-accent)",
+  awaiting: "var(--color-warning)",
+  won: "var(--color-success)",
+  lost: "var(--color-text-muted)",
 };
 
 export interface Organisation {
   id: string;
   name: string;
   kind: OrganisationKind;
+  // Client-context fields (task D5, 18 Jul) — see Organisation schema
+  // docstring, erd.md §5.1: lifetime value/win rate/open-proposal-count
+  // are deliberately absent here, computed server-side, not stored.
+  tier: OrganisationTier | null;
+  rate_card_on_file: boolean;
+  rate_card_terms: string | null;
+  region: string | null;
 }
 
 export interface OrganisationCreate {
   name: string;
   kind?: OrganisationKind;
+  tier?: OrganisationTier | null;
+  rate_card_on_file?: boolean;
+  rate_card_terms?: string | null;
+  region?: string | null;
 }
 
 export interface Contact {
@@ -194,9 +230,17 @@ export interface Enquiry {
   channel: EnquiryChannel;
   raw_content: string;
   stage: EnquiryStage;
+  // Server-computed rollup of `stage` (added 18 Jul, H3) — always present
+  // on API responses; STAGE_TO_STATUS above is only a fallback for any
+  // client-only enquiry shape that hasn't round-tripped through the API.
+  status: EnquiryStatus;
   assigned_to: string | null;
   created_by: string | null;
   lost_reason: string | null;
+  // Team hand-off (task H5). forwarded_to is a team member's name (not an
+  // auth user id); forward_note is the optional client-timeline line.
+  forwarded_to: string | null;
+  forward_note: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -217,25 +261,50 @@ export interface EnquiryWithBriefs extends Enquiry {
   briefs: Brief[];
 }
 
-// --- AI Brief Parser (D1) ---------------------------------------------
+// --- AI Brief Parser (D1, standardized 18 Jul — D5) ---------------------
+// One brief contract regardless of channel (email/WhatsApp/manual free
+// text via the AI parser, or the public web form filling these directly
+// and deterministically). Mirrors api/app/schemas/brief.py +
+// migrations/versions/0008_brief_standardization.py. See erd.md §5.1.
 
 export type BudgetBasis = "total" | "per_head";
+export type BudgetStatus = "confirmed" | "tbc" | "unspecified";
+export type TimeOfDay = "morning" | "afternoon" | "evening" | "full_day";
 export type ReviewStatus = "auto_accepted" | "needs_review" | "human_approved" | "human_corrected";
+
+// Conventional (not schema-enforced) keys inside `requirements` — see
+// app/schemas/brief.py's REQUIREMENTS_CONVENTIONAL_KEYS. Not exhaustive;
+// any other free-form key is still valid.
+export interface BriefRequirements {
+  format_needs?: string[];
+  tech_needs?: string[];
+  mood?: string[];
+  attachments?: { name: string; url: string }[];
+  [key: string]: unknown;
+}
 
 export interface Brief {
   id: string;
   enquiry_id: string;
   version: number;
-  event_date: string | null;
+  date_window_start: string | null;
+  date_window_end: string | null;
+  date_suggestions: string[];
   event_date_flexible: boolean;
   guest_count: number | null;
   event_type: string | null;
+  duration_hours: number | null;
+  time_of_day: TimeOfDay | null;
   budget_amount: number | null;
   budget_basis: BudgetBasis | null;
-  duration_hours: number | null;
+  budget_status: BudgetStatus;
+  budget_estimate_low: number | null;
+  budget_estimate_high: number | null;
   location_preference: string | null;
-  requirements: Record<string, unknown>;
+  requirements: BriefRequirements;
   confidence: number;
+  flagged_fields: string[];
+  fields_to_confirm: string[];
   review_status: ReviewStatus;
   reviewed_by: string | null;
   parser_model: string | null;
@@ -244,15 +313,23 @@ export interface Brief {
 }
 
 export interface BriefUpdate {
-  event_date?: string | null;
+  date_window_start?: string | null;
+  date_window_end?: string | null;
+  date_suggestions?: string[];
   event_date_flexible?: boolean;
   guest_count?: number | null;
   event_type?: string | null;
+  duration_hours?: number | null;
+  time_of_day?: TimeOfDay | null;
   budget_amount?: number | null;
   budget_basis?: BudgetBasis | null;
-  duration_hours?: number | null;
+  budget_status?: BudgetStatus;
+  budget_estimate_low?: number | null;
+  budget_estimate_high?: number | null;
   location_preference?: string | null;
-  requirements?: Record<string, unknown>;
+  requirements?: BriefRequirements;
+  flagged_fields?: string[];
+  fields_to_confirm?: string[];
   review_status?: ReviewStatus;
 }
 
@@ -360,6 +437,13 @@ export interface Proposal {
   legal_boilerplate: string | null;
   currency: string;
   origin: ProposalOrigin;
+  // Added 18 Jul (task D5). event_date is the *locked* date decided in
+  // the generate-and-share step — distinct from the brief's
+  // date_window_start/end, which may still span a range. personal_email_
+  // copy is the AI-drafted note that accompanies a sent proposal, a
+  // separate artifact from intro_copy.
+  event_date: string | null;
+  personal_email_copy: string | null;
   created_by: string | null;
   sent_at: string | null;
   created_at: string;
@@ -373,6 +457,8 @@ export interface ProposalCreate {
   legal_boilerplate?: string | null;
   currency?: string;
   origin?: ProposalOrigin;
+  event_date?: string | null;
+  personal_email_copy?: string | null;
 }
 
 export interface ProposalVenue {

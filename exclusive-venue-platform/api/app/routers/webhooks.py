@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from app.core.admin_client import get_admin_client
 from app.core.config import get_settings
 from app.schemas.webhook import ResendInboundEmailData, ResendInboundEmailEvent
+from app.services.brief_intake import auto_parse_enquiry
 from app.services.webhook_verification import WebhookVerificationError, verify_svix_signature
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -93,5 +94,11 @@ async def resend_inbound_email(request: Request):
         .insert({"contact_id": contact_id, "channel": "email", "raw_content": raw_content})
         .execute()
     )
+    enquiry_id = enquiry.data[0]["id"]
 
-    return {"status": "received", "enquiry_id": enquiry.data[0]["id"]}
+    # Auto-structure the brief so it's ready when staff open the enquiry.
+    # Fail-soft: if the parser is down the enquiry is still saved, just
+    # without a brief (a human can parse it later).
+    brief = auto_parse_enquiry(admin, enquiry_id, raw_content)
+
+    return {"status": "received", "enquiry_id": enquiry_id, "brief_parsed": brief is not None}

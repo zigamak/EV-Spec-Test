@@ -53,19 +53,100 @@
 
 ## 5. Enquiry → proposal pipeline
 
-**`organisations`** — name, kind CHECK IN ('corporate','agency','brand','production_house','other') — mirrors EV's client categories.
+**`organisations`** — name, kind CHECK IN ('corporate','agency','brand','production_house','other') — mirrors EV's client categories. **Client-context fields added 18 Jul, migration 0008 (task D5):** tier CHECK IN ('tier-1','tier-2','standard') nullable, rate_card_on_file boolean, rate_card_terms text, region text — surfaced on the enquiry/proposal UI the way the reference prototype's client panel does ("Tier-1 · Maison", "rate card on file"). Lifetime value / win rate / open-proposals-count are deliberately NOT columns — computed from `proposals`/`enquiries` at query time, same pattern as `enquiries.status` (§5.1).
 
-**`contacts`** — deliberately independent of profiles (most contacts never log in): full_name, email (indexed for dedup, NOT unique — hard uniqueness would break Concierge intake), phone, organisation_id FK, source CHECK IN ('email','web_form','concierge','manual').
+**`contacts`** — deliberately independent of profiles (most contacts never log in): full_name, email (indexed for dedup, NOT unique — hard uniqueness would break Concierge intake), phone, organisation_id FK, source CHECK IN ('email','web_form','concierge','manual','whatsapp') — **'whatsapp' added 18 Jul, migration 0008**.
 
-**`enquiries`** — the pipeline spine: contact_id FK nullable (raw inbound email may not yet be parsed), channel CHECK IN ('email','web_form','manual','concierge'), **raw_content** (original text verbatim — the parser's input, kept for re-parsing and the golden set), **stage** CHECK IN ('new','qualified','proposal_sent','follow_up','visit','negotiation','confirmed','lost') — note: follow_up and visit are status labels only in this build, no scheduling/reminder functionality attached (that's deferred Phase 2) — assigned_to FK, **created_by FK nullable** (null for anonymous intake), lost_reason.
+**`enquiries`** — the pipeline spine: contact_id FK nullable (raw inbound email may not yet be parsed), channel CHECK IN ('email','web_form','manual','concierge','whatsapp') — **'whatsapp' added 18 Jul, migration 0008**, **raw_content** (original text verbatim — the parser's input, kept for re-parsing and the golden set), **stage** CHECK IN ('enquiry','briefed','proposed','held','signed','lost') — **revised 18 Jul, migration 0007**; see §5.1 for the full lifecycle, transition graph, and why — assigned_to FK, **created_by FK nullable** (null for anonymous intake), lost_reason.
 
-**`briefs`** — the AI parser's structured output. **Separate versioned table** because enquiries get re-parsed and the brief is the engines' input contract: enquiry_id FK CASCADE, version, event_date, event_date_flexible, guest_count, event_type, budget_amount, **budget_basis CHECK IN ('total','per_head')** — the single field where a parsing mistake silently corrupts every downstream quote, hence explicit — duration_hours, location_preference, **requirements jsonb** (soft criteria for E2 re-rank), **confidence** (0–1), **review_status** CHECK IN ('auto_accepted','needs_review','human_approved','human_corrected'), reviewed_by, parser_model (reproducibility).
+**`briefs`** — the AI parser's structured output, **standardized 18 Jul, migration 0008 (task D5)** into one contract every channel targets, not just email: enquiry_id FK CASCADE, version, **date_window_start/date_window_end** (a range, not a single date — renamed from the original `event_date`), **date_suggestions jsonb** (candidate specific dates, e.g. two Saturdays, when the window isn't narrowed yet), event_date_flexible (now means "exact date within the window still unconfirmed"), guest_count, event_type, duration_hours, **time_of_day** CHECK IN ('morning','afternoon','evening','full_day') nullable, budget_amount, **budget_basis CHECK IN ('total','per_head')** — the single field where a parsing mistake silently corrupts every downstream quote, hence explicit — **budget_status** CHECK IN ('confirmed','tbc','unspecified') (a "TBC" state distinct from simply unset), **budget_estimate_low/high** (an AI-estimated range for when it's TBC — both null or both set), location_preference, **requirements jsonb** (soft criteria for E2 re-rank; now has a *documented conventional shape* — `format_needs`, `tech_needs`, `mood`, `attachments` — enforced in app code, not a DB CHECK, same pattern as `pricing_rules`' jsonb tiers in §4), **confidence** (0–1, whole-brief), **flagged_fields/fields_to_confirm jsonb** (which *named* fields are uncertain or worth confirming with the client — confidence alone can't say that), **review_status** CHECK IN ('auto_accepted','needs_review','human_approved','human_corrected'), reviewed_by, parser_model (reproducibility).
 
-**`proposals`** — enquiry_id FK, **brief_id FK (pins which brief version priced this proposal)**, status CHECK IN ('draft','pending_approval','sent','viewed','accepted','declined') — pending_approval exists for P2's possible human-approval flow (client Decision 2) — title, intro_copy (AI-drafted, editable), **legal_boilerplate (snapshot at send time — terms changing later must not mutate sent proposals)**, currency, origin CHECK IN ('staff','concierge'), created_by nullable, sent_at.
+The public web form (C2, not yet built) is the one path that fills these columns *without* going through the AI parser at all — a client answering structured form questions isn't a parsing problem, so that handler should construct the row directly (confidence=1.0, review_status='human_approved').
+
+**`proposals`** — enquiry_id FK, **brief_id FK (pins which brief version priced this proposal)**, status CHECK IN ('draft','pending_approval','sent','viewed','accepted','declined') — pending_approval exists for P2's possible human-approval flow (client Decision 2) — title, intro_copy (AI-drafted, editable), **legal_boilerplate (snapshot at send time — terms changing later must not mutate sent proposals)**, currency, origin CHECK IN ('staff','concierge'), **event_date** (the *locked* date decided in the generate-and-share step, distinct from the brief's date_window_start/end which may still span a range — added 18 Jul, migration 0008), **personal_email_copy** (the AI-drafted note that accompanies a sent proposal — a separate artifact from intro_copy, confirmed as a real feature on the reference prototype, not a backlog guess — added 18 Jul, migration 0008), created_by nullable, sent_at.
 
 **`proposal_venues`** — the 2–4 options in a proposal, each with its computed quote. **⚠️ Deliberate FK behavior, verified by testing:** venue_id/configuration_id/pricing_rules_id use RESTRICT, not CASCADE — a venue that has ever been quoted cannot be hard-deleted (blocked atomically, zero data loss, confirmed live). To retire a venue, set status='inactive'. This is the one FK where CASCADE would be actively harmful. proposal_id FK CASCADE, venue_id FK, configuration_id FK (which layout quoted), **pricing_rules_id FK — pins the exact ruleset version used, so quotes stay reproducible after rules change (F3)**, **quote_breakdown jsonb** (full engine output), quote_total (denormalized), venue_copy (AI-drafted, editable), sort_order (E2 re-rank writes this), recommended boolean.
 
 **`proposal_link_tokens`** — tokenized shareable links (G5): proposal_id FK CASCADE, token UNIQUE (url-safe, ≥32 bytes), expires_at, revoked. Public link page reads via RPC/edge function — anon has NO direct SELECT on proposals.
+
+### 5.1 Enquiry lifecycle — canonical stage model (revised 18 Jul)
+
+*History: first resolved 18 Jul by keeping the original 8-stage build (new/qualified/proposal_sent/follow_up/visit/negotiation/confirmed/lost) as canonical against the reference prototype's simpler Open/Awaiting/Won status. Superseded the same day once fuller workflow context (the full Inquiries → Proposal → Pipeline → Client journey, including the 4-step proposal builder and the explicit 5-stage Kanban) made clear the intended pipeline is Enquiry → Briefed → Proposed → Held → Signed, not the original 8-stage build. Migration `0007_enquiry_stage_revamp.py` carries out the change; the status rollup below is unaffected in shape, only in which stages feed each bucket.*
+
+**The core engine, in one line:** an inbound enquiry gets turned into a priced proposal; that proposal is tracked as a deal until signed; every step is logged permanently against the client's record. `stage` is the deal's position in that journey; `status` (below) is the coarser Open/Awaiting/Won/Lost lens salespeople and reporting actually look at day to day.
+
+**Stage → trigger table** (who/what moves an enquiry from one stage to the next):
+
+| Stage | Meaning | Trigger | Who/what |
+|---|---|---|---|
+| `enquiry` | Enquiry captured, not yet reviewed — lands on the Inquiries page like a shared inbox | Automatic, on intake | System — C2 public web form / C3 staff manual entry / C4 Resend email webhook |
+| `briefed` | Operator opened the enquiry, the AI Concierge extracted a structured brief (D1–D4), operator confirmed/corrected it, and chose "Build proposal" over declining or forwarding | Manual — `POST /enquiries/{id}/transition` | Staff. This is the handoff into the proposal builder's Step 1 |
+| `proposed` | Proposal built (venues curated, pricing generated, link/PDF/email compiled and sent — G0–G3, the proposal builder's Steps 2–4) | Manual — `POST /enquiries/{id}/transition`. **Currently a separate action from the proposal's own "Mark as sent" (G3) — not auto-coupled; see H3 below** | Staff |
+| `held` | A soft hold is placed on a venue/date while the client decides — tracked with an expiry (see `venue_availability.hold_expires_at`, erd.md §4) | Manual | Staff. `held` can lapse back to `proposed` if the hold expires unconverted — a real transition, not a dead end (see Calendar/Booking, §9) |
+| `signed` (terminal) | Deal won, contract signed | Manual | Staff — the pipeline's "Won" outcome |
+| `lost` (terminal, reachable from any non-terminal stage, requires `lost_reason`) | Enquiry declined or fell through | Manual | Staff — covers both the initial "decline politely" triage choice and a deal falling through later, on the same terms |
+
+**Transition graph** (`api/app/services/stage_machine.py`): `enquiry → briefed → proposed → {held, signed}`, `held → {signed, proposed}` (the lapse-back case), `lost` reachable from any of `enquiry`/`briefed`/`proposed`/`held`. `signed` and `lost` are terminal.
+
+**Status rollup** (computed for salesperson/reporting views — e.g. a Pipeline Board grouping or a status pill — never a stored column, never replaces `stage`):
+
+- **Open** — `enquiry`, `briefed`
+- **Awaiting** — `proposed`, `held`
+- **Won** — `signed`
+- **Lost** — `lost`
+
+**Where the rest of the full workflow lands (not all built yet — tracked separately, not schema changes here unless noted):**
+
+- *Client profile panel on the enquiry card* (account tier, lifetime value, assigned account manager) — reads from `contacts`/`organisations` plus proposal/enquiry history; no new columns needed, a UI/query concern (Client page, already scoped).
+- *Decline / Forward triage actions* — Decline = transition to `lost` with `lost_reason`; Forward = `POST /enquiries/{id}/assign` (already built) reassigning to another salesperson, stage unchanged. Both exist at the API level; a dedicated "Forward" UI affordance with a context note is a small follow-up.
+- *4-step proposal builder UI (The enquiry / Curate venues / Generate pricing / Generate & share)* — maps directly onto D1–D4 (brief), E1–E2 (curation, still AI-assisted re-rank per the constitution, not purely manual), F1–F5 (pricing), G1–G5 (generate & share). No new engines; the builder is a UI sequencing concern over engines that already exist or are scoped.
+- *Lock-per-option pricing before moving on* — backlog UX idea, not costed, not blocking M1.
+- *Branded proposal email (distinct from the web link/PDF) with open/click tracking* — the email-with-attachments send is a 4th AI-copy prompt not yet scoped (backlog); open/click tracking is explicitly deferred to Phase 2 (`proposal_events`, §9) same as before.
+- *Pipeline dashboard totals (pipeline value, QTD revenue, win rate vs. benchmark)* — aggregation over `enquiries`/`proposals`, no new tables; a reporting-layer task, not scoped yet.
+- *Clients page as full relationship timeline* (interleaving every enquiry email, brief, proposal, event, onboarding note) — already scoped as the Client page (J1) at a lighter weight; the full interleaved timeline view is an extension of the same data, not a new domain.
+- *Contacts as a shared directory auto-populated from enquiries* — already how `contacts` works today (created on intake); a dedicated Contacts *page* (browse/search independent of an enquiry) is UI not yet scoped.
+- *Calendar/Booking with hold expiry countdowns* — `venue_availability` already models holds with `hold_expires_at` (erd.md §4); the Calendar page (J2) already renders them. The *countdown* UI treatment and auto-lapsing a hold back to `proposed` when it expires (vs. relying on staff to notice) is a follow-up, not a schema gap.
+
+### 5.2 The standardized brief contract (task D5, 18 Jul, migration 0008)
+
+*Why this exists:* live-browsing the reference prototype's actual Concierge briefing UI (exclusive-venue-internal-ai-sales.netlify.app — a real Dior enquiry) showed a much richer field set than the original `briefs` table (0004) supported: client tier + rate card context, a date *window* with suggested alternates instead of one date, a "TBC" budget with an AI-estimated range instead of one nullable number, mood/format/tech needs, and per-field confidence flags instead of one whole-brief score. None of that was representable before.
+
+**The core rule: one brief contract, regardless of channel.** Email, WhatsApp, and a manual staff note all reach `app/services/brief_parser.py::parse_enquiry()` and land on exactly the same fields — the AI's job is to fill this shape, not to invent its own per-channel structure. The public web form (C2, not yet built) is the deliberate exception: a client answering structured form questions isn't a parsing problem, so that intake path should construct a `ParsedBrief` directly from the submitted values (confidence=1.0, review_status='human_approved'), skipping the AI parser entirely rather than serializing the form back into free text just to re-parse it.
+
+Example of what a fully-populated brief now looks like (based on the real Dior enquiry observed live), shown as the API's JSON shape:
+
+```json
+{
+  "date_window_start": "2026-06-28",
+  "date_window_end": "2026-07-05",
+  "date_suggestions": ["2026-06-28", "2026-07-05"],
+  "event_date_flexible": true,
+  "guest_count": 48,
+  "event_type": "Brand · cocktail",
+  "duration_hours": 3,
+  "time_of_day": "afternoon",
+  "budget_amount": null,
+  "budget_basis": null,
+  "budget_status": "tbc",
+  "budget_estimate_low": 110000,
+  "budget_estimate_high": 180000,
+  "location_preference": null,
+  "requirements": {
+    "format_needs": ["panel", "certificate", "f&b"],
+    "tech_needs": ["branded_backdrop", "av"],
+    "mood": ["considered", "light", "sense of arrival"],
+    "attachments": [{"name": "Dior_event_moodboard.pdf", "url": "..."}]
+  },
+  "confidence": 0.96,
+  "flagged_fields": ["date_window_end"],
+  "fields_to_confirm": ["date_window_end", "budget_status"],
+  "review_status": "auto_accepted"
+}
+```
+
+`requirements` stays a genuinely free-form jsonb column — `format_needs`/`tech_needs`/`mood`/`attachments` are a *documented convention* (`app/schemas/brief.py::REQUIREMENTS_CONVENTIONAL_KEYS`), validated in application code, not a database CHECK. This is the same trade-off `pricing_rules`' jsonb tiers make in §4: keeps the column extensible for an unusual enquiry without a migration, while still giving the UI a predictable shape to render for the common case — the "use JSON but keep it standardized enough to render right" balance.
+
+Client-context fields (tier, rate card, region) live on `organisations`, not `briefs` — they describe the client relationship, not this particular enquiry, and are already available before a brief is even parsed (see §5's `organisations` entry).
 
 ## 6. Supplier marketplace (Product 4)
 
@@ -137,6 +218,8 @@ Every deferred feature's migration path is **additive** — nothing in Phase 2 r
 | 0004 | D1 | briefs |
 | 0005 | F1 | pricing_rules, pricing_rule_addons |
 | 0006 | G1 | proposals, proposal_venues, proposal_link_tokens |
+| 0007 | H3 | enquiries.stage — ALTER only, remaps 8 old values to the 5-stage model (enquiry/briefed/proposed/held/signed) + lost, replaces the CHECK constraint; see §5.1 |
+| 0008 | D5 | ALTER only — standardizes `briefs` (date window + suggestions, time_of_day, budget_status + estimate range, flagged_fields/fields_to_confirm), adds 'whatsapp' to `enquiries.channel`/`contacts.source`, adds tier/rate_card_on_file/rate_card_terms/region to `organisations`, adds event_date/personal_email_copy to `proposals` |
 
 Suppliers (suppliers, supplier_media, supplier_tags, supplier_subscriptions, proposal_suppliers) are Product 4 scope — their revision is cut in Week 6 when `specs/0004-supplier-marketplace/tasks.md` is populated, not part of the Product 1 sequence above.
 

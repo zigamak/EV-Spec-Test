@@ -35,7 +35,7 @@ The spine of the product, end to end:
 4. **Pricing engine** applies each venue's rules to produce a quote.
 5. **Salesperson reviews and edits** the draft proposal — adjusting venue selection, pricing, and copy as needed.
 6. **One-click proposal** is generated: branded, exported as PDF and as a tokenized shareable link.
-7. **Enquiry is tracked** through pipeline stages from new through to confirmed.
+7. **Enquiry is tracked** through pipeline stages from Enquiry through to Signed (or Lost, at any point) — see §5 CRM pipeline and `specs/0000-foundation/erd.md` §5.1 for the full stage-by-stage lifecycle and who/what triggers each transition.
 
 *Diagrams (user flow, technical architecture) are attached to the Notion source page — see "PRD — Product 1: Internal Platform (Core)" for the rendered SVGs.*
 
@@ -45,7 +45,7 @@ The spine of the product, end to end:
 CRUD for venues with photo/video galleries, capacities per configuration, rules and restrictions as structured fields, an availability calendar, and pricing conditions stored as structured rule data (not free text).
 
 **Enquiry intake**
-Three intake paths: a public web form, manual entry by a salesperson, and inbound email parsing via a dedicated enquiries@ address forwarded to a webhook.
+The entry point into the full enquiry pipeline, not a standalone form: however it arrives, an enquiry becomes a row in the pipeline that then moves through brief parsing, venue recommendation, staff assignment, and every stage through to signed or lost (see **CRM pipeline** below and `specs/0000-foundation/erd.md` §5.1 for the full stage-by-stage lifecycle). Three intake paths feed it: a public web form, manual entry by a salesperson, and inbound email parsing via a dedicated enquiries@ address forwarded to a webhook. Every path produces the same `enquiries` row shape (`raw_content` kept verbatim for re-parsing, `channel` recording which path it came in on) and starts at stage `enquiry`, assigned to nobody until a salesperson picks it up or it's explicitly assigned/forwarded.
 
 **AI brief parser**
 A GPT call (OpenAI API) that converts an enquiry (email or free text) into a structured JSON brief. Every parse carries a confidence signal; low-confidence or ambiguous briefs are flagged for human review rather than passed silently downstream.
@@ -62,7 +62,9 @@ Pure deterministic code driven by structured rule data: base rates, per-head tie
 Renders selected venues, computed pricing, and generated copy into a branded template. Fully editable by the salesperson before sending. Exports as a PDF and as a tokenized shareable link.
 
 **CRM pipeline**
-Enquiry stages (new → qualified → proposal sent → follow-up → visit → negotiation → confirmed) with salesperson assignment and a status board. The board surfaces the fields a salesperson actually needs at a glance per enquiry: event type, guest count, event date, budget, proposed venue(s), and current stage — not just a bare stage tracker. **Note:** "follow-up" and "visit" are status labels only in this build — no scheduling, reminders, or visit-logistics functionality is attached to them; that belongs to the deferred Phase 2 layer.
+Enquiry stages: Enquiry → Briefed → Proposed → Held → Signed, with `lost` reachable from any non-terminal stage (requires a reason) and `held` able to lapse back to `proposed` if a soft venue hold expires unconverted. Deterministic transition graph, enforced server-side (`POST /enquiries/{id}/transition`) — a bare PATCH cannot change stage, and an invalid jump (e.g. Enquiry → Signed) is rejected. Salesperson assignment via a separate endpoint (also usable as a "forward to a colleague" action). The board surfaces the fields a salesperson actually needs at a glance per enquiry: event type, guest count, event date, budget, proposed venue(s), and current stage — not just a bare stage tracker. Matches the reference workflow's own Kanban naming (Enquiry, Briefed, Proposed, Held, Signed).
+
+**Stage model decision (18 Jul, revised same day):** first resolution kept the original 7+1-stage build (new/qualified/proposal_sent/follow_up/visit/negotiation/confirmed/lost) canonical against the reference prototype's simpler Open/Awaiting/Won status, layering the simpler model on top as a computed rollup. That resolution was superseded the same day once fuller workflow context confirmed the reference's 5-stage Kanban (Enquiry/Briefed/Proposed/Held/Signed) is the actual intended pipeline, not just an alternate lens on the 7+1-stage build. Migration `0007_enquiry_stage_revamp.py` carries out the schema change; the computed status rollup for salesperson/reporting views is unchanged in shape, only in which stages feed each bucket — Open (Enquiry, Briefed), Awaiting (Proposed, Held), Won (Signed), Lost (lost). Full stage-by-stage triggers, the transition graph, and how the rest of the reference workflow (decline/forward actions, the 4-step proposal builder, pricing-option locking, tracking) maps onto this model are documented in `specs/0000-foundation/erd.md` §5.1.
 
 ## 6. The AI-vs-Deterministic Boundary
 
@@ -123,7 +125,7 @@ Blocking items from the **Assets & Requirements Tracker**, with due dates:
 | Page | Route | Features | Detailed Description | Notes |
 |---|---|---|---|---|
 | Login | /app/login | Auth | Email/password sign-in via Supabase Auth. Redirects unauthenticated visitors here from any /app/* route. On success, redirects to the Pipeline Board. No self-registration — accounts are created via the Supabase dashboard only. | Every other route requires this first |
-| Pipeline Board | /app | CRM Pipeline, Enquiry Board | Kanban-style board grouped by stage (new, qualified, proposal sent, follow-up, visit, negotiation, confirmed). Each card shows event type, guest count, date, budget, and proposed venue(s) at a glance. Click a card to open the Command Center. | This IS the dashboard home — no separate landing/overview page exists |
+| Pipeline Board | /app | CRM Pipeline, Enquiry Board | Kanban-style board grouped by stage (Enquiry, Briefed, Proposed, Held, Signed), with Open/Awaiting/Won/Lost status pills above it for the coarser rollup view. Each card shows event type, guest count, date, budget, and proposed venue(s) at a glance. Click a card to open the Command Center. | This IS the dashboard home — no separate landing/overview page exists |
 | New Enquiry | modal, not a route | Enquiry Intake | Slide-over form for enquiries received by phone or in person. Captures contact details and a free-text brief, run through the same AI parser as email/web-form enquiries. Closes back to the Pipeline Board on save. | Slide-over from Pipeline Board, kept fast on purpose |
 | Enquiry Command Center | /app/enquiries/[id] | AI Parser, Recommendation, Pricing, Enquiry Board | The core working screen. Raw enquiry message alongside the editable AI-parsed brief with confidence indicator. Below: the recommended venue shortlist with live pricing per venue, updating as parameters change. One action generates a proposal from the selected venues. | The core screen; raw message + brief + venues + pricing together |
 | Proposal Editor | same route, edit mode | Proposal Builder | Same route as Command Center, entered once venues are selected. Choose which venues go into the proposal, edit AI-drafted copy per venue, review the full branded layout before generating the final PDF and shareable link. | A mode within Command Center, not a separate page |

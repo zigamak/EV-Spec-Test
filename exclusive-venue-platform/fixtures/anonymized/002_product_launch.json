@@ -6,6 +6,7 @@
     "event_type": "product launch",
     "budget_amount": 3500,
     "budget_basis": "per_head",
+    "budget_status": "confirmed",
     "duration_hours": 3
   }
 }

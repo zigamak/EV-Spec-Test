@@ -1,8 +1,9 @@
 """Validation schemas for the proposal domain (erd.md §5, task G1). Mirrors
-migrations/versions/0006_proposals.py.
+migrations/versions/0006_proposals.py, as revised by
+0008_brief_standardization.py (event_date, personal_email_copy — 18 Jul).
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -20,6 +21,16 @@ class ProposalCreate(BaseModel):
     legal_boilerplate: str | None = None
     currency: str = "HKD"
     origin: ProposalOrigin = "staff"
+    # The date actually locked for this proposal (e.g. from the brief's
+    # date_suggestions, or a date the client confirmed) — distinct from
+    # the brief's date_window_start/end, which may still span a range.
+    event_date: date | None = None
+    # AI-drafted note that accompanies the sent proposal (task D5, 18
+    # Jul) — a separate artifact from intro_copy, which lives inside the
+    # proposal page itself. Confirmed as a real reference-site feature,
+    # not a speculative addition: the operator console logs it to the
+    # client timeline as its own message alongside the proposal link/PDF.
+    personal_email_copy: str | None = None
 
 
 class ProposalUpdate(BaseModel):
@@ -27,6 +38,8 @@ class ProposalUpdate(BaseModel):
     intro_copy: str | None = None
     legal_boilerplate: str | None = None
     status: ProposalStatus | None = None
+    event_date: date | None = None
+    personal_email_copy: str | None = None
 
 
 class Proposal(BaseModel):
@@ -39,6 +52,8 @@ class Proposal(BaseModel):
     legal_boilerplate: str | None
     currency: str
     origin: ProposalOrigin
+    event_date: date | None
+    personal_email_copy: str | None
     created_by: UUID | None
     sent_at: datetime | None
     created_at: datetime

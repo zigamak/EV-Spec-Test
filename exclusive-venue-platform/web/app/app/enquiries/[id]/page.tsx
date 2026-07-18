@@ -408,7 +408,8 @@ function BriefEditor({
   saving: boolean;
   onSave: (update: BriefUpdate) => Promise<void>;
 }) {
-  const [eventDate, setEventDate] = useState(brief.event_date ?? "");
+  const [dateWindowStart, setDateWindowStart] = useState(brief.date_window_start ?? "");
+  const [dateWindowEnd, setDateWindowEnd] = useState(brief.date_window_end ?? "");
   const [guestCount, setGuestCount] = useState(brief.guest_count?.toString() ?? "");
   const [eventType, setEventType] = useState(brief.event_type ?? "");
   const [budgetAmount, setBudgetAmount] = useState(brief.budget_amount?.toString() ?? "");
@@ -419,11 +420,13 @@ function BriefEditor({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     await onSave({
-      event_date: eventDate || null,
+      date_window_start: dateWindowStart || null,
+      date_window_end: dateWindowEnd || null,
       guest_count: guestCount ? Number(guestCount) : null,
       event_type: eventType || null,
       budget_amount: budgetAmount ? Number(budgetAmount) : null,
       budget_basis: budgetBasis || null,
+      budget_status: budgetAmount ? "confirmed" : brief.budget_status,
       duration_hours: durationHours ? Number(durationHours) : null,
       location_preference: location || null,
     });
@@ -450,8 +453,22 @@ function BriefEditor({
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
         <div>
-          <label style={labelStyle}>Event date</label>
-          <input type="date" style={inputStyle} value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+          <label style={labelStyle}>Date window (start)</label>
+          <input
+            type="date"
+            style={inputStyle}
+            value={dateWindowStart}
+            onChange={(e) => setDateWindowStart(e.target.value)}
+          />
+        </div>
+        <div>
+          <label style={labelStyle}>Date window (end)</label>
+          <input
+            type="date"
+            style={inputStyle}
+            value={dateWindowEnd}
+            onChange={(e) => setDateWindowEnd(e.target.value)}
+          />
         </div>
         <div>
           <label style={labelStyle}>Guest count</label>

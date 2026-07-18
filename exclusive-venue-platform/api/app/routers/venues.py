@@ -40,7 +40,7 @@ Staff = Annotated[StaffUser, Depends(require_staff_session)]
 def _raise_for_postgrest(exc: APIError) -> None:
     # RLS denials surface as either an empty affected-rows result (handled
     # by callers) or a Postgres permission/check-constraint error here.
-    code = (exc.code or "").upper()
+    code = str(exc.code or "").upper()
     if code in {"42501", "PGRST301"}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, exc.message) from exc
     if code == "23505":
@@ -99,8 +99,12 @@ def list_venues_with_portfolio(client: ScopedClient, _: Staff, status_filter: st
     """Embeds each venue's media + configurations via PostgREST's
     relationship syntax in one round trip — replaces the Venues page's
     per-venue media/configuration loop (found live 16 Jul)."""
+    # venues has two FK relationships to venue_media (venue_media.venue_id,
+    # and venues.hero_media_id back to venue_media) — a plain "venue_media(*)"
+    # embed is ambiguous (PGRST201) and PostgREST needs the FK constraint
+    # name to pick the right one.
     query = client.table("venues").select(
-        "*, venue_media(*), venue_configurations(*)"
+        "*, venue_media!venue_media_venue_id_fkey(*), venue_configurations(*)"
     ).order("created_at", desc=True)
     if status_filter:
         query = query.eq("status", status_filter)
@@ -108,9 +112,16 @@ def list_venues_with_portfolio(client: ScopedClient, _: Staff, status_filter: st
         result = query.execute()
     except APIError as exc:
         _raise_for_postgrest(exc)
+    # Sign every photo across every venue in one Storage round trip. Signing
+    # per row here was an N+1 over the network (one round trip per photo);
+    # it hasn't bitten yet only because no venue has media rows so far.
+    all_paths = [
+        media["storage_path"] for venue in result.data for media in venue.get("venue_media", [])
+    ]
+    url_by_path = storage.signed_urls(all_paths)
     for venue in result.data:
         for media in venue.get("venue_media", []):
-            media["url"] = storage.signed_url(media["storage_path"])
+            media["url"] = url_by_path.get(media["storage_path"])
     return result.data
 
 

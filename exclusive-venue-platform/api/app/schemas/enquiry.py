@@ -1,37 +1,58 @@
 """Validation schemas for the enquiry intake domain (erd.md §5). Mirrors
-the CHECK constraints in migrations/versions/0003_enquiry_intake.py.
+the CHECK constraints in migrations/versions/0003_enquiry_intake.py, as
+revised by 0007_enquiry_stage_revamp.py (stage, 18 Jul) and
+0008_brief_standardization.py (channel/source 'whatsapp' + organisation
+tier/rate-card fields, same day).
 """
 
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from app.schemas.brief import Brief
+from app.services.stage_machine import EnquiryStatus, stage_to_status
 
 OrganisationKind = Literal["corporate", "agency", "brand", "production_house", "other"]
-ContactSource = Literal["email", "web_form", "concierge", "manual"]
-EnquiryChannel = Literal["email", "web_form", "manual", "concierge"]
-EnquiryStage = Literal[
-    "new", "qualified", "proposal_sent", "follow_up", "visit", "negotiation", "confirmed", "lost"
-]
+OrganisationTier = Literal["tier-1", "tier-2", "standard"]
+ContactSource = Literal["email", "web_form", "concierge", "manual", "whatsapp"]
+EnquiryChannel = Literal["email", "web_form", "manual", "concierge", "whatsapp"]
+EnquiryStage = Literal["enquiry", "briefed", "proposed", "held", "signed", "lost"]
 
 
 class OrganisationCreate(BaseModel):
     name: str = Field(min_length=1)
     kind: OrganisationKind = "other"
+    tier: OrganisationTier | None = None
+    rate_card_on_file: bool = False
+    rate_card_terms: str | None = None
+    region: str | None = None
 
 
 class OrganisationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     kind: OrganisationKind | None = None
+    tier: OrganisationTier | None = None
+    rate_card_on_file: bool | None = None
+    rate_card_terms: str | None = None
+    region: str | None = None
 
 
 class Organisation(BaseModel):
     id: UUID
     name: str
     kind: OrganisationKind
+    # Client-context fields (task D5, 18 Jul) — surfaced on the enquiry/
+    # proposal UI the way the reference prototype's client panel does
+    # ("Tier-1 · Maison", "rate card on file"). Lifetime value / win rate
+    # / open-proposals-count are deliberately NOT columns here — same
+    # computed-not-stored pattern as enquiries.status (erd.md §5.1);
+    # they're aggregated from proposals/enquiries at query time.
+    tier: OrganisationTier | None
+    rate_card_on_file: bool
+    rate_card_terms: str | None
+    region: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -73,10 +94,14 @@ class EnquiryUpdate(BaseModel):
     """Stage is deliberately not editable here — every stage change must
     go through POST /enquiries/{id}/transition (task H1's stage machine),
     which validates the transition graph. A bare PATCH could otherwise
-    jump straight from 'new' to 'confirmed'."""
+    jump straight from 'enquiry' to 'signed'."""
 
     contact_id: UUID | None = None
     lost_reason: str | None = None
+    # Team hand-off (task H5) — see migration 0009. forwarded_to is a name,
+    # not an auth.users id (that's assigned_to); forward_note is timeline copy.
+    forwarded_to: str | None = None
+    forward_note: str | None = None
 
 
 class Enquiry(BaseModel):
@@ -88,8 +113,18 @@ class Enquiry(BaseModel):
     assigned_to: UUID | None
     created_by: UUID | None
     lost_reason: str | None
+    forwarded_to: str | None
+    forward_note: str | None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def status(self) -> EnquiryStatus:
+        """Salesperson/reporting-facing rollup (Open/Awaiting/Won/Lost),
+        computed from `stage` at serialization time — never a stored
+        column. See erd.md §5.1 and app/services/stage_machine.py."""
+        return stage_to_status(self.stage)
 
 
 class EnquiryWithBriefs(Enquiry):

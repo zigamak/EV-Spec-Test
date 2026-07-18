@@ -5,11 +5,48 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-const NAV_ITEMS = [
-  { href: "/app", label: "Pipeline" },
-  { href: "/app/venues", label: "Venues" },
-  { href: "/app/clients", label: "Clients" },
-  { href: "/app/calendar", label: "Calendar" },
+/**
+ * Sidebar structure follows the Operator Console design brief (WORKSPACE /
+ * INVENTORY groups, in the reference order). `href` present = a built,
+ * navigable route; `href` omitted = shown but not yet built (rendered muted
+ * with a "Soon" tag rather than linking to a 404). The flow deliberately
+ * leads with Inquiries — every downstream surface hangs off an enquiry.
+ *
+ * Count badges from the reference screenshot are intentionally NOT shown:
+ * they'd be fabricated numbers until wired to real per-section counts
+ * (constitution — internal surfaces still never invent data). Add them back
+ * once each section can report a real count.
+ */
+interface NavItem {
+  label: string;
+  href?: string;
+  match?: (pathname: string) => boolean;
+}
+
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Workspace",
+    items: [
+      { label: "Dashboard" },
+      {
+        label: "Inquiries",
+        href: "/app/enquiries",
+        match: (p) => p.startsWith("/app/enquiries"),
+      },
+      { label: "Proposals" },
+      { label: "Pipeline", href: "/app", match: (p) => p === "/app" },
+      { label: "Clients", href: "/app/clients" },
+      { label: "Contacts" },
+      { label: "Calendar Booking", href: "/app/calendar" },
+    ],
+  },
+  {
+    label: "Inventory",
+    items: [
+      { label: "Venues", href: "/app/venues" },
+      { label: "Pricing rules" },
+    ],
+  },
 ];
 
 function initialsFromEmail(email: string): string {
@@ -58,34 +95,96 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
           height: "100vh",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "0 var(--space-2)" }}>
-          <span style={{ fontSize: "1.3rem" }} aria-hidden>
-            🔑
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "0 var(--space-2)" }}>
+          <span
+            aria-hidden
+            style={{
+              width: "34px",
+              height: "34px",
+              flexShrink: 0,
+              border: "1.5px solid var(--color-navy-text)",
+              borderRadius: "4px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: "var(--color-navy-text)" }} />
           </span>
-          <span style={{ fontFamily: "var(--font-serif)", fontSize: "1.15rem" }}>Exclusive Venue</span>
+          <span style={{ lineHeight: 1.1 }}>
+            <span style={{ display: "block", fontFamily: "var(--font-serif)", fontSize: "1.2rem" }}>
+              Exclusive&middot;Venue
+            </span>
+            <span
+              style={{
+                display: "block",
+                fontSize: "0.6rem",
+                letterSpacing: "0.18em",
+                textTransform: "uppercase",
+                color: "var(--color-navy-text-muted)",
+                marginTop: "2px",
+              }}
+            >
+              Operator
+            </span>
+          </span>
         </div>
 
-        <nav style={{ marginTop: "var(--space-8)", display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-          {NAV_ITEMS.map((item) => {
-            const active = item.href === "/app" ? pathname === "/app" : pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
+        <nav style={{ marginTop: "var(--space-8)", display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label}>
+              <div
                 style={{
-                  display: "block",
-                  padding: "var(--space-2) var(--space-3)",
-                  borderRadius: "var(--radius-md)",
-                  color: active ? "#fff" : "var(--color-navy-text-muted)",
-                  background: active ? "var(--color-navy-hover)" : "transparent",
-                  fontWeight: active ? 600 : 400,
-                  textDecoration: "none",
+                  fontSize: "0.6rem",
+                  letterSpacing: "0.16em",
+                  textTransform: "uppercase",
+                  color: "var(--color-navy-text-muted)",
+                  padding: "0 var(--space-3)",
+                  marginBottom: "var(--space-3)",
                 }}
               >
-                {item.label}
-              </Link>
-            );
-          })}
+                {group.label}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                {group.items.map((item) => {
+                  const built = Boolean(item.href);
+                  const active =
+                    built && (item.match ? item.match(pathname) : pathname.startsWith(item.href!));
+
+                  const rowStyle: React.CSSProperties = {
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "var(--space-2) var(--space-3)",
+                    // Burgundy left bar on the active row (reference screenshot);
+                    // transparent keeps text alignment identical when inactive.
+                    borderLeft: `2px solid ${active ? "var(--color-accent)" : "transparent"}`,
+                    color: active ? "#fff" : "var(--color-navy-text-muted)",
+                    background: active ? "var(--color-navy-hover)" : "transparent",
+                    fontWeight: active ? 600 : 400,
+                    fontSize: "0.9rem",
+                    textDecoration: "none",
+                  };
+
+                  if (!built) {
+                    // Not yet a route — rendered like any inactive item (no
+                    // link, no badge) rather than navigating to a 404.
+                    return (
+                      <div key={item.label} aria-disabled style={{ ...rowStyle, cursor: "default" }}>
+                        <span>{item.label}</span>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <Link key={item.label} href={item.href!} style={rowStyle}>
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         <Link
@@ -95,10 +194,12 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
             padding: "var(--space-3) var(--space-4)",
             background: "var(--color-accent)",
             color: "#fff",
-            borderRadius: "var(--radius-pill)",
             textAlign: "center",
             textDecoration: "none",
             fontWeight: 600,
+            fontSize: "0.7rem",
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
           }}
         >
           + New Enquiry

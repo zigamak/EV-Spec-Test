@@ -44,5 +44,31 @@ def signed_url(storage_path: str) -> str:
     return result["signedURL"]
 
 
+def signed_urls(storage_paths: list[str]) -> dict[str, str]:
+    """Batch form of signed_url(): one round trip for many paths, keyed by
+    the path that produced each URL.
+
+    Signing is a network call per path, so a list endpoint that signs each
+    row in a loop pays that latency once per photo (a portfolio of 20
+    venues x 4 photos = 80 sequential round trips). Callers that already
+    hold every path they need should sign them together.
+
+    Paths the Storage API reports an error for are omitted rather than
+    raising: one unreadable object shouldn't blank out a whole page.
+    """
+    if not storage_paths:
+        return {}
+
+    unique_paths = list(dict.fromkeys(storage_paths))
+    results = _admin_client().storage.from_(BUCKET).create_signed_urls(
+        unique_paths, SIGNED_URL_TTL_SECONDS
+    )
+    return {
+        item["path"]: item["signedURL"]
+        for item in results
+        if not item.get("error") and item.get("path") and item.get("signedURL")
+    }
+
+
 def delete_object(storage_path: str) -> None:
     _admin_client().storage.from_(BUCKET).remove([storage_path])

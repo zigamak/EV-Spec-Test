@@ -1,11 +1,13 @@
 {
   "raw_content": "Hello, my partner and I (Alex Chan) are getting married and want to book a reception for 80 guests on 20 November 2026. We haven't nailed down a firm budget yet but think somewhere around HK$400,000 total feels right. No amplified music after 11pm is fine for us, and we'd like somewhere with an outdoor garden option. No specific district preference.",
   "expected": {
-    "event_date": "2026-11-20",
+    "date_window_start": "2026-11-20",
+    "date_window_end": "2026-11-20",
     "event_date_flexible": false,
     "guest_count": 80,
     "event_type": "wedding reception",
     "budget_amount": 400000,
-    "budget_basis": "total"
+    "budget_basis": "total",
+    "budget_status": "confirmed"
   }
 }

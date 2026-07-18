@@ -25,6 +25,7 @@ from app.schemas.proposal import (
     ProposalVenueCreate,
     ProposalVenueUpdate,
 )
+from app.services.activity_log import log_activity
 from app.services.copy_generator import generate_intro_copy, generate_venue_copy
 from app.services.proposal_links import default_expiry, generate_token
 
@@ -74,7 +75,20 @@ def create_proposal(payload: ProposalCreate, client: ScopedClient, staff: Staff)
         result = client.table("proposals").insert(body).execute()
     except APIError as exc:
         _raise_for_postgrest(exc)
-    return result.data[0]
+    proposal = result.data[0]
+    log_activity(
+        client,
+        action="proposal.created",
+        actor_type="human",
+        actor_id=staff.user_id,
+        actor_label=staff.email,
+        entity_type="proposal",
+        entity_id=proposal["id"],
+        enquiry_id=str(payload.enquiry_id),
+        summary=f"Created proposal “{proposal['title']}”",
+        metadata={"brief_id": str(payload.brief_id)},
+    )
+    return proposal
 
 
 @router.get("/proposals/{proposal_id}", response_model=Proposal)
@@ -138,9 +152,13 @@ def generate_proposal_intro_copy(proposal_id: UUID, client: ScopedClient, _: Sta
             if org:
                 organisation_name = org[0]["name"]
 
+    # Prefer the proposal's own locked event_date (task D5, 18 Jul) — set
+    # once a date is confirmed in the generate-and-share step — falling
+    # back to the brief's date_window_start when nothing's locked yet.
+    event_date_for_copy = proposal.get("event_date") or brief.get("date_window_start")
     try:
         intro_copy = generate_intro_copy(
-            brief.get("event_type"), brief.get("guest_count"), brief.get("event_date"), organisation_name
+            brief.get("event_type"), brief.get("guest_count"), event_date_for_copy, organisation_name
         )
     except LLMUnavailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc

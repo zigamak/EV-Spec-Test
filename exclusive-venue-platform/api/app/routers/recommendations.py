@@ -47,14 +47,20 @@ def _load_brief(client: Client, brief_id: UUID) -> BriefInput:
     if not result.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Brief not found")
     row = result.data[0]
-    if row["guest_count"] is None or row["event_date"] is None or row["duration_hours"] is None:
+    # Availability/pricing need one concrete date — task D5 (18 Jul) turned
+    # the brief's single event_date into a date_window_start/end range, so
+    # the window's start is used as the effective date for this engine
+    # until a proposal locks a real date (proposals.event_date). Revisit if
+    # shortlisting against the whole window (not just its first day) turns
+    # out to matter in practice.
+    if row["guest_count"] is None or row["date_window_start"] is None or row["duration_hours"] is None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Brief is missing guest_count/event_date/duration_hours — cannot build a shortlist yet",
+            "Brief is missing guest_count/date_window_start/duration_hours — cannot build a shortlist yet",
         )
     return BriefInput(
         guest_count=row["guest_count"],
-        event_date=row["event_date"],
+        event_date=row["date_window_start"],
         duration_hours=row["duration_hours"],
         budget_amount=row["budget_amount"],
         budget_basis=row["budget_basis"],

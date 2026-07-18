@@ -7,8 +7,11 @@ import { apiFetch, ApiError } from "@/lib/api/client";
 import {
   ENQUIRY_STAGES,
   STAGE_LABEL,
+  STATUS_COLOR,
+  STATUS_LABEL,
   type Brief,
   type EnquiryStage,
+  type EnquiryStatus,
   type EnquiryWithBriefs,
 } from "@/lib/api/types";
 import { avatarColorForId, daysSince } from "@/lib/utils";
@@ -41,6 +44,11 @@ export default function PipelineBoardPage() {
   const [error, setError] = useState<string | null>(null);
   const [showNewEnquiry, setShowNewEnquiry] = useState(false);
   const [search, setSearch] = useState("");
+  // Status-rollup filter (task H3, 18 Jul) — Open/Awaiting/Won/Lost is the
+  // reference-workflow-facing view layered on top of the granular stage
+  // columns below; click a pill to see which enquiries are in that bucket
+  // without leaving the board. null = show every status (default).
+  const [statusFilter, setStatusFilter] = useState<EnquiryStatus | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -80,7 +88,25 @@ export default function PipelineBoardPage() {
     );
   }, [cards, search]);
 
-  const activeCards = useMemo(() => visibleCards.filter((c) => c.enquiry.stage !== "lost"), [visibleCards]);
+  // Status counts computed over every visible card (including "lost") so
+  // the summary bar reflects the whole pipeline, not just the active board
+  // below it — this is the answer to "what's the flow, is it open": every
+  // enquiry's rollup status, at a glance, before you dig into stage columns.
+  const statusCounts = useMemo(() => {
+    const counts: Record<EnquiryStatus, number> = { open: 0, awaiting: 0, won: 0, lost: 0 };
+    for (const c of visibleCards) counts[c.enquiry.status]++;
+    return counts;
+  }, [visibleCards]);
+
+  const statusFilteredCards = useMemo(
+    () => (statusFilter ? visibleCards.filter((c) => c.enquiry.status === statusFilter) : visibleCards),
+    [visibleCards, statusFilter],
+  );
+
+  const activeCards = useMemo(
+    () => statusFilteredCards.filter((c) => c.enquiry.stage !== "lost"),
+    [statusFilteredCards],
+  );
   const pipelineValue = useMemo(
     () => activeCards.reduce((sum, c) => sum + (c.brief?.budget_amount ?? 0), 0),
     [activeCards],
@@ -124,6 +150,51 @@ export default function PipelineBoardPage() {
         </div>
       </div>
 
+      {cards !== null && (
+        <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-6)" }}>
+          {(["open", "awaiting", "won", "lost"] as EnquiryStatus[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter((current) => (current === s ? null : s))}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--space-2)",
+                padding: "var(--space-2) var(--space-4)",
+                borderRadius: "var(--radius-pill)",
+                border: statusFilter === s ? `1px solid ${STATUS_COLOR[s]}` : "1px solid var(--color-border)",
+                background: statusFilter === s ? "var(--color-surface)" : "var(--color-bg)",
+                cursor: "pointer",
+                fontSize: "0.85rem",
+              }}
+              title={`${STATUS_LABEL[s]}: ${statusCounts[s]} enquir${statusCounts[s] === 1 ? "y" : "ies"}`}
+            >
+              <span
+                style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  background: STATUS_COLOR[s],
+                  display: "inline-block",
+                }}
+              />
+              <span style={{ color: "var(--color-text-primary)", fontWeight: statusFilter === s ? 700 : 400 }}>
+                {STATUS_LABEL[s]}
+              </span>
+              <span style={{ color: "var(--color-text-secondary)" }}>{statusCounts[s]}</span>
+            </button>
+          ))}
+          {statusFilter && (
+            <button
+              onClick={() => setStatusFilter(null)}
+              style={{ ...pillStyle, cursor: "pointer", color: "var(--color-text-muted)" }}
+            >
+              Clear filter
+            </button>
+          )}
+        </div>
+      )}
+
       {error && (
         <p style={{ color: "var(--color-danger)", marginTop: "var(--space-4)" }}>{error}</p>
       )}
@@ -131,7 +202,40 @@ export default function PipelineBoardPage() {
         <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)" }}>Loading…</p>
       )}
 
-      {cards !== null && (
+      {/* "lost" has no kanban column (it's collapsed out of activeCards by
+          design, per H2) — clicking the Lost pill shows a flat list instead
+          of an empty board. */}
+      {cards !== null && statusFilter === "lost" && (
+        <div style={{ marginTop: "var(--space-8)", display: "flex", flexDirection: "column", gap: "var(--space-3)", maxWidth: "480px" }}>
+          {statusFilteredCards.length === 0 && (
+            <p style={{ color: "var(--color-text-muted)" }}>No lost enquiries.</p>
+          )}
+          {statusFilteredCards.map(({ enquiry, brief }) => (
+            <Link
+              key={enquiry.id}
+              href={`/app/enquiries/${enquiry.id}`}
+              style={{
+                display: "block",
+                padding: "var(--space-4)",
+                background: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-lg)",
+                color: "var(--color-text-primary)",
+                textDecoration: "none",
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>{brief?.event_type ?? "Untitled enquiry"}</div>
+              {enquiry.lost_reason && (
+                <div style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)", marginTop: "var(--space-1)" }}>
+                  {enquiry.lost_reason}
+                </div>
+              )}
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {cards !== null && statusFilter !== "lost" && (
         <div
           style={{
             display: "flex",
@@ -223,7 +327,14 @@ export default function PipelineBoardPage() {
 
                       <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-2)", fontSize: "0.8rem", color: "var(--color-text-secondary)" }}>
                         {brief?.guest_count && <span>👥 {brief.guest_count}</span>}
-                        {brief?.event_date && <span>📅 {brief.event_date}</span>}
+                        {brief?.date_window_start && (
+                          <span>
+                            📅 {brief.date_window_start}
+                            {brief.date_window_end && brief.date_window_end !== brief.date_window_start
+                              ? ` – ${brief.date_window_end}`
+                              : ""}
+                          </span>
+                        )}
                       </div>
 
                       {brief?.budget_amount && (

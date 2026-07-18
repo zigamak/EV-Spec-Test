@@ -132,14 +132,59 @@ class AnthropicClient:
         return "".join(block.text for block in response.content if block.type == "text")
 
 
-class GeminiClient:
-    """**Unverified** — written from Google's documented function-calling
-    shape, not exercised against a live account (same disclosure as every
-    other never-tested integration this session: OpenAI's live calls,
-    Resend's payload shape). Confirm the exact `google-generativeai`
-    surface before relying on this in production."""
+def _sanitize_schema_for_gemini(node: Any) -> Any:
+    """Translate the provider-neutral JSON Schema (ToolSchema.parameters)
+    into Gemini's stricter OpenAPI-subset shape. OpenAI/Anthropic accept
+    JSON Schema as-is; Gemini does not:
+      - `type` must be a single string, not a `["string", "null"]` union —
+        the union becomes `type: "string"` + `nullable: true`.
+      - `enum` may not contain null — a null member becomes `nullable: true`.
+      - constraint keywords it doesn't model (minimum, exclusiveMinimum,
+        maximum, …) are dropped rather than sent and rejected.
+    Without this the SDK raises `'list' object has no attribute 'upper'`
+    the moment it sees a union `type`."""
+    if not isinstance(node, dict):
+        return node
+    out: dict[str, Any] = {}
+    for key, val in node.items():
+        if key == "type":
+            if isinstance(val, list):
+                non_null = [t for t in val if t != "null"]
+                out["type"] = non_null[0] if non_null else "string"
+                if "null" in val:
+                    out["nullable"] = True
+            else:
+                out["type"] = val
+        elif key == "enum":
+            out["enum"] = [member for member in val if member is not None]
+            if any(member is None for member in val):
+                out["nullable"] = True
+        elif key == "properties":
+            out["properties"] = {k: _sanitize_schema_for_gemini(v) for k, v in val.items()}
+        elif key == "items":
+            out["items"] = _sanitize_schema_for_gemini(val)
+        elif key in ("description", "required", "nullable"):
+            out[key] = val
+        # everything else (minimum/maximum/exclusiveMinimum/…) is intentionally dropped
+    return out
 
-    MODEL = "gemini-2.0-flash"
+
+def _proto_to_native(value: Any) -> Any:
+    """Recursively convert google-generativeai's proto-plus wrappers
+    (MapComposite / RepeatedComposite, returned inside a function call's
+    `args`) into plain dict/list/scalars. `dict(args)` only unwraps the top
+    level, leaving nested arrays/objects as proto types that pydantic then
+    mis-handles (e.g. 'list object has no attribute upper'). Duck-typed
+    rather than importing proto internals, so it survives SDK version bumps."""
+    if hasattr(value, "items"):
+        return {key: _proto_to_native(val) for key, val in value.items()}
+    if not isinstance(value, str | bytes) and hasattr(value, "__iter__"):
+        return [_proto_to_native(item) for item in value]
+    return value
+
+
+class GeminiClient:
+    MODEL = "gemini-2.5-flash"
 
     def __init__(self, api_key: str):
         import google.generativeai as genai
@@ -152,7 +197,7 @@ class GeminiClient:
         function_declaration = {
             "name": tool.name,
             "description": tool.description,
-            "parameters": tool.parameters,
+            "parameters": _sanitize_schema_for_gemini(tool.parameters),
         }
         model = self._genai.GenerativeModel(
             self.MODEL, tools=[{"function_declarations": [function_declaration]}]
@@ -164,8 +209,18 @@ class GeminiClient:
             )
         except Exception as exc:  # google-generativeai raises its own exception hierarchy
             raise LLMCallError(str(exc)) from exc
-        call = response.candidates[0].content.parts[0].function_call
-        return dict(call.args)
+        # With mode=ANY the model must call the tool, but the call needn't be
+        # the first part — find the part that actually carries one.
+        try:
+            parts = response.candidates[0].content.parts
+            call = next(
+                part.function_call
+                for part in parts
+                if getattr(part, "function_call", None) and part.function_call.name
+            )
+        except (StopIteration, IndexError, AttributeError) as exc:
+            raise LLMCallError(f"Gemini returned no usable function call: {exc}") from exc
+        return _proto_to_native(call.args)
 
     def generate_text(self, prompt: str) -> str:
         try:

@@ -1,12 +1,14 @@
 {
   "raw_content": "Hi team, I'm Jamie Wong from Lantern & Co, we're looking to host our annual corporate gala for around 220 guests on 14 March 2027. Budget is roughly HK$900,000 total. We'd love a rooftop or skyline-view space in Central or Wan Chai. Cocktail-style, 4 hours. You can reach me at jamie.wong@example.com.",
   "expected": {
-    "event_date": "2027-03-14",
+    "date_window_start": "2027-03-14",
+    "date_window_end": "2027-03-14",
     "event_date_flexible": false,
     "guest_count": 220,
     "event_type": "corporate gala",
     "budget_amount": 900000,
     "budget_basis": "total",
+    "budget_status": "confirmed",
     "duration_hours": 4,
     "location_preference": "Central or Wan Chai, rooftop/skyline view"
   }

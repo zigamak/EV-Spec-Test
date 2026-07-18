@@ -35,8 +35,9 @@ const MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "long", year: "nu
  * every active venue, read-only. Booked and hold (with expiry) states
  * shown side by side; holds are still created from the Venue Profile
  * page (B6), not here. "Upcoming events" sidebar (added 16 Jul, reference
- * screenshots) surfaces real enquiries with a known event_date — not
- * fabricated data, just a different view of what already exists. */
+ * screenshots) surfaces real enquiries with a known date_window_start —
+ * not fabricated data, just a different view of what already exists.
+ * (event_date -> date_window_start/end, task D5, 18 Jul.) */
 export default function PortfolioCalendarPage() {
   const [windows, setWindows] = useState<PortfolioWindow[] | null>(null);
   const [upcoming, setUpcoming] = useState<UpcomingEnquiry[]>([]);
@@ -61,8 +62,10 @@ export default function PortfolioCalendarPage() {
           enquiry,
           brief: [...enquiry.briefs].sort((a, b) => b.version - a.version)[0],
         }))
-        .filter((x): x is UpcomingEnquiry => !!x.brief?.event_date && x.brief.event_date >= todayIso)
-        .sort((a, b) => (a.brief.event_date! < b.brief.event_date! ? -1 : 1));
+        .filter(
+          (x): x is UpcomingEnquiry => !!x.brief?.date_window_start && x.brief.date_window_start >= todayIso,
+        )
+        .sort((a, b) => (a.brief.date_window_start! < b.brief.date_window_start! ? -1 : 1));
       setUpcoming(upcomingEnquiries);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load calendar");
@@ -243,7 +246,7 @@ export default function PortfolioCalendarPage() {
                 )}
               </div>
               <div style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)", marginTop: "var(--space-1)" }}>
-                {brief.event_date} · {enquiry.channel}
+                {brief.date_window_start} · {enquiry.channel}
               </div>
               <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>{STAGE_LABEL[enquiry.stage]}</div>
             </Link>
