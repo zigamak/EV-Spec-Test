@@ -75,6 +75,30 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
       .then(({ data }) => setEmail(data.session?.user.email ?? null));
   }, [showNav]);
 
+  // Inactivity logout: while the operator is active the Supabase client keeps
+  // the session refreshed (they stay signed in — no more mid-use logouts).
+  // We only sign out after a genuine idle stretch, resetting on any activity.
+  useEffect(() => {
+    if (!showNav) return;
+    const IDLE_LIMIT_MS = 2 * 60 * 60 * 1000; // 2 hours of no activity
+    let timer: ReturnType<typeof setTimeout>;
+    const logout = async () => {
+      await createClient().auth.signOut();
+      window.location.href = "/app/login";
+    };
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(logout, IDLE_LIMIT_MS);
+    };
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => {
+      clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, reset));
+    };
+  }, [showNav]);
+
   if (!showNav) {
     return <div style={{ minHeight: "100vh" }}>{children}</div>;
   }

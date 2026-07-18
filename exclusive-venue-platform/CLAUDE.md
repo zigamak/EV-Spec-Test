@@ -45,6 +45,15 @@ Sync ritual, weekly (~10 min): read `progress.md` + `tasks.md` checkmarks → up
 
 Filter rule: non-engineering rows (Write PRD, Resolve Concierge decisions, Pilot test with salespeople) never enter `tasks.md`. They live in the Sprint Board only.
 
+## Git workflow (every commit)
+
+Before committing anything, ALWAYS:
+
+1. **Sync `main` first.** `git checkout main` → `git fetch origin` → `git pull` (fast-forward). This catches any updates pushed elsewhere (other machine, teammate, Claude Desktop session) before you branch, so you never build on a stale base.
+2. **Never commit straight to `main`.** Create a temporary feature branch off the freshly-pulled `main`: `git checkout -b feat/<short-topic>` (or `fix/…`). Do the commit(s) there.
+3. **Push the branch** (`git push -u origin <branch>`) and open a PR for `main` — don't push commits directly onto `main`.
+4. Note: the git repo root is the **parent** `EV-Spec-Test/` folder, not `exclusive-venue-platform/`. `git add -A` will sweep in siblings like `ui-ux-pro-max-skill/` — stage deliberately (it's gitignored now) and confirm `api/.env` is never staged (it holds live secrets).
+
 ## Reference
 
 Full rationale, the target repo structure, and the failure-mode table this setup is designed against: "SDD Repo Setup Guide — Exclusive Venue" in Notion (Design System & Product Docs). Pairs with the Sprint Board, the four PRDs, and the client Requirements Gathering document.

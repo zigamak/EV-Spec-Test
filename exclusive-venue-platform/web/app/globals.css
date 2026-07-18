@@ -14,3 +14,25 @@ body {
   color: var(--color-text-primary);
   font-family: var(--font-sans);
 }
+
+/* Print-to-PDF: the on-screen proposal document IS the PDF. window.print()
+   hides everything except #proposal-doc, so the browser's "Save as PDF"
+   produces the branded document with no app chrome. No server-side PDF
+   library needed. */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #proposal-doc,
+  #proposal-doc * {
+    visibility: visible !important;
+  }
+  #proposal-doc {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 24px;
+    width: 100%;
+    background: #fff;
+  }
+}

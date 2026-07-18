@@ -287,21 +287,22 @@
 - [ ] G5. Tokenized shareable link page (public read-only)  [G3; Tier-2 gate]
       — the data endpoint it needs (`GET /public/proposals/{token}`) already
       exists from G1; only the actual page UI is left, gated on the brand kit anyway.
-- [~] G6. Guided 4-step Proposal Builder (reference "Inquiry → Proposal"
+- [x] G6. Guided 4-step Proposal Builder (reference "Inquiry → Proposal"
       workflow) at `/app/proposals/new?enquiry={id}` — a wizard over the
       already-built endpoints (no new API), with a draft proposal as the
       autosave target. Entered from the Inquiries inbox "Build proposal".  [G0–G3]
-      — **Step 1 (The Enquiry) DONE**: raw email + structured briefing card
-      (confidence, flagged/to-confirm, mood/format/tech, TBC budget), re-parse.
-      — **Step 2 (Curate venues) DONE**: portfolio grid + "Fits brief"
-      shortlist, 1–5 pick persisted to proposal_venues on toggle. Category
-      ribbon deferred (no venue `category` column yet).
-      — **Step 3 (Generate pricing) PENDING**: per-venue quote breakdown from
-      each proposal_venue's stored `quote_breakdown`/`quote_total`, with a
-      manual override (`PATCH /proposals/{id}/venues/{pv}`). Endpoints exist.
-      — **Step 4 (Generate & share) PENDING**: intro copy
-      (`generate-intro-copy`) + shareable web link (`/links`). PDF stays G4.
-      Endpoints exist; only the screens are left.
+      — **Step 1 (The Enquiry)**: raw email + structured briefing card
+      (confidence, flagged/to-confirm, mood/format/tech, TBC budget), re-parse,
+      plus inline editable brief fields (staff correct what AI/client missed).
+      — **Step 2 (Curate venues)**: portfolio grid + "Fits brief" shortlist,
+      1–5 pick persisted to proposal_venues on toggle. Category ribbon
+      deferred (no venue `category` column yet).
+      — **Step 3 (Generate pricing)**: per-venue quote breakdown from each
+      proposal_venue's stored `quote_breakdown`, with a manual total override
+      (`PATCH /proposals/{id}/venues/{pv}`). Deterministic — no AI.
+      — **Step 4 (Generate & share)**: AI intro copy (`generate-intro-copy`,
+      editable) + shareable link (`/links`) + mark-sent. PDF stays G4 (soon);
+      the public read-only link page is G5 (pending).
 
 ## H. CRM Pipeline
 - [x] H1. Stage machine: Enquiry → Briefed → Proposed → Held → Signed;

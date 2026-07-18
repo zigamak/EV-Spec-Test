@@ -12,13 +12,14 @@ import json
 from datetime import date
 from uuid import UUID
 
-from app.core.llm import ToolSchema, get_llm_client
+from app.core.llm import LLMCallError, LLMUnavailableError, ToolSchema, get_llm_client
 from app.schemas.pricing import QuoteRequest
 from app.schemas.recommendation import (
     BriefInput,
     ExclusionReason,
     ShortlistEntry,
     VenueCandidate,
+    VenueOption,
 )
 from app.services.pricing_engine import calculate_quote
 
@@ -152,6 +153,152 @@ def filter_venues(
         )
 
     return shortlist, excluded
+
+
+def _quote_for(brief: BriefInput, candidate: VenueCandidate):
+    """Compute a quote for a candidate that has a pricing rule, else None."""
+    if candidate.pricing_rule is None:
+        return None
+    return calculate_quote(
+        candidate.pricing_rule,
+        candidate.pricing_rule_addons,
+        QuoteRequest(
+            guest_count=brief.guest_count,
+            event_date=brief.event_date,
+            duration_hours=brief.duration_hours,
+            addon_ids=[],
+        ),
+    )
+
+
+def evaluate_venues(
+    brief: BriefInput, candidates: list[VenueCandidate], recommend: bool = False
+) -> list[VenueOption]:
+    """Curate-step evaluation (task E3): every active venue as a *selectable*
+    option — fit is advisory, not a gate. Non-fitting venues keep their
+    reasons (over capacity/budget, unavailable, restriction conflict) but are
+    still priced and returned so an operator can pick them by judgement. Sorts
+    fitting-first then by price; optionally flags AI `recommended` ones by
+    description. Venues with no configuration at all are skipped (a proposal
+    line needs a configuration to attach to)."""
+    target_budget = _target_budget(brief)
+    needs = set(brief.requirements.get("needs", []))
+    options: list[VenueOption] = []
+
+    for candidate in candidates:
+        if not candidate.configurations:
+            continue
+
+        reasons: list[str] = []
+        if candidate.status != "active":
+            reasons.append("not active")
+        if _has_overlap(brief.event_date, candidate.availability):
+            reasons.append("unavailable on that date")
+        conflicting = [
+            r for r in candidate.restrictions if r.hard and RESTRICTION_CONFLICT_KEYS.get(r.kind) in needs
+        ]
+        if conflicting:
+            reasons.append(f"hard restriction: {conflicting[0].kind}")
+
+        # Prefer the smallest configuration that fits; if none fit, fall back
+        # to the largest so the venue is still priceable and selectable.
+        configuration = _best_fit_configuration(candidate.configurations, brief.guest_count)
+        if configuration is None:
+            reasons.append("over capacity")
+            configuration = max(candidate.configurations, key=lambda c: c.capacity)
+
+        quote = _quote_for(brief, candidate)
+        estimated_total = quote.total if quote else None
+        quote_breakdown = quote.model_dump(mode="json") if quote else None
+        within_budget: bool | None = None
+        if quote is None:
+            reasons.append("no pricing rule set")
+        elif target_budget is not None:
+            within_budget = quote.total <= target_budget * (1 + BUDGET_TOLERANCE)
+            if not within_budget:
+                reasons.append("over budget")
+
+        options.append(
+            VenueOption(
+                venue_id=candidate.venue_id,
+                venue_name=candidate.name,
+                configuration_id=configuration.id,
+                configuration_name=configuration.name,
+                capacity=configuration.capacity,
+                fits=len(reasons) == 0,
+                fit_reasons=reasons,
+                estimated_total=estimated_total,
+                within_budget=within_budget,
+                pricing_rules_id=candidate.pricing_rule.id if candidate.pricing_rule else None,
+                quote_breakdown=quote_breakdown,
+            )
+        )
+
+    # Fitting first, then cheapest first (unpriced last).
+    options.sort(key=lambda o: (not o.fits, o.estimated_total is None, o.estimated_total or 0))
+    for i, option in enumerate(options):
+        option.sort_order = i
+
+    if recommend:
+        _apply_ai_recommendation(brief, candidates, options)
+    return options
+
+
+RECOMMEND_TOOL = ToolSchema(
+    name="recommend_venues",
+    description=(
+        "From the given venues, choose the 1-2 that best match the client's brief and mood, "
+        "judging by each venue's description. Only choose from the provided venue_ids."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "recommended_venue_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "The venue_ids you recommend (1-2), a subset of those given.",
+            }
+        },
+        "required": ["recommended_venue_ids"],
+    },
+)
+
+
+def _apply_ai_recommendation(
+    brief: BriefInput, candidates: list[VenueCandidate], options: list[VenueOption]
+) -> None:
+    """Flag AI-recommended options by *description* (task E3). Only the fitting
+    options are eligible; fail-soft — an AI outage just means no recommendation
+    badge, never a broken curate step (constitution #1: advisory only)."""
+    fitting = [o for o in options if o.fits]
+    if len(fitting) <= 1:
+        for option in fitting:
+            option.recommended = True
+        return
+
+    description_by_id = {str(c.venue_id): c.description for c in candidates}
+    prompt = json.dumps(
+        {
+            "soft_requirements": brief.requirements,
+            "guest_count": brief.guest_count,
+            "venues": [
+                {
+                    "venue_id": str(o.venue_id),
+                    "name": o.venue_name,
+                    "description": description_by_id.get(str(o.venue_id)),
+                }
+                for o in fitting
+            ],
+        }
+    )
+    try:
+        arguments = get_llm_client().call_tool(prompt, RECOMMEND_TOOL)
+    except (LLMUnavailableError, LLMCallError):
+        return
+    recommended_ids = {str(v) for v in arguments.get("recommended_venue_ids", [])}
+    for option in options:
+        if str(option.venue_id) in recommended_ids:
+            option.recommended = True
 
 
 RERANK_TOOL = ToolSchema(

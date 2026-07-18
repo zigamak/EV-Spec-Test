@@ -3,16 +3,17 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiFetch, ApiError } from "@/lib/api/client";
+import { apiDownload, apiFetch, ApiError } from "@/lib/api/client";
 import type {
   Brief,
   Contact,
   Enquiry,
   Organisation,
   Proposal,
+  ProposalLinkToken,
   ProposalVenue,
-  ShortlistEntry,
-  ShortlistResponse,
+  QuoteBreakdown,
+  VenueOption,
   VenueWithPortfolio,
 } from "@/lib/api/types";
 
@@ -67,6 +68,10 @@ const TAG: React.CSSProperties = {
   borderRadius: "2px",
 };
 
+function numberWord(n: number): string {
+  return ["zero", "one", "two", "three", "four", "five"][n] ?? String(n);
+}
+
 function formatWindow(brief: Brief | null): string | null {
   if (!brief?.date_window_start) return null;
   const fmt = (iso: string) =>
@@ -106,12 +111,25 @@ export default function ProposalBuilderPage() {
   const [editingBrief, setEditingBrief] = useState(false);
 
   // Step 2 state
-  const [shortlist, setShortlist] = useState<ShortlistResponse | null>(null);
+  const [options, setOptions] = useState<VenueOption[] | null>(null);
   const [portfolio, setPortfolio] = useState<VenueWithPortfolio[] | null>(null);
   const [picked, setPicked] = useState<ProposalVenue[]>([]);
   const [venuesError, setVenuesError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [venueView, setVenueView] = useState<"all" | "fits">("all");
+
+  // Step 3 / 4 state
+  const [savingOverride, setSavingOverride] = useState<string | null>(null);
+  const [introCopy, setIntroCopy] = useState("");
+  const [generatingCopy, setGeneratingCopy] = useState(false);
+  const [savingCopy, setSavingCopy] = useState(false);
+  const [shareToken, setShareToken] = useState<string | null>(null);
+  const [creatingLink, setCreatingLink] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [proposalStatus, setProposalStatus] = useState("draft");
+  const [emailCopy, setEmailCopy] = useState("");
+  const [generatingEmail, setGeneratingEmail] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
 
   const ensureDraftProposal = useCallback(
     async (enq: Enquiry, latestBrief: Brief, orgName: string | null) => {
@@ -199,16 +217,16 @@ export default function ProposalBuilderPage() {
       setVenuesError(err instanceof ApiError ? err.message : "Failed to load venues.");
       return;
     }
-    // The shortlist (which venues fit + their pricing) is a separate call and
-    // can 422 if the brief lacks guests/date/duration — in that case you can
-    // still browse the portfolio, just without "fits brief" pricing.
+    // Venue options price EVERY venue (fitting or not) + flag fit/recommended.
+    // Can 422 if the brief lacks guests/date/duration — then you can still
+    // browse the portfolio, just without fit/pricing info.
     try {
-      setShortlist(await apiFetch<ShortlistResponse>(`/briefs/${brief.id}/shortlist`));
+      setOptions(await apiFetch<VenueOption[]>(`/briefs/${brief.id}/venue-options`));
     } catch (err) {
-      setShortlist({ shortlist: [], excluded: [] });
+      setOptions([]);
       if (err instanceof ApiError && err.status === 422) {
         setVenuesError(
-          "Add guests, a date, and duration to the brief to price venue matches — you can still browse below.",
+          "Add guests, a date, and duration to the brief to price venues — you can still browse below.",
         );
       }
     }
@@ -218,7 +236,7 @@ export default function ProposalBuilderPage() {
     if (step === 2) loadVenues();
   }, [step, loadVenues]);
 
-  async function toggleVenue(venueId: string, entry: ShortlistEntry | undefined) {
+  async function toggleVenue(venueId: string, option: VenueOption | undefined) {
     if (!proposal) return;
     const existing = picked.find((p) => p.venue_id === venueId);
     setTogglingId(venueId);
@@ -228,20 +246,24 @@ export default function ProposalBuilderPage() {
         await apiFetch(`/proposals/${proposal.id}/venues/${existing.id}`, { method: "DELETE" });
         setPicked((prev) => prev.filter((p) => p.id !== existing.id));
       } else {
-        // Only addable when the shortlist priced it: proposal_venues require
-        // a pricing rule + computed quote, which only the shortlist provides.
-        if (!entry?.pricing_rules_id || entry.quote_breakdown == null || entry.estimated_total == null) return;
+        // A venue can be picked regardless of fit — but attaching it to a
+        // proposal still needs a pricing rule + computed quote. Only venues
+        // with no pricing rule at all can't be added.
+        if (!option?.pricing_rules_id || option.quote_breakdown == null || option.estimated_total == null) {
+          setVenuesError(`${option?.venue_name ?? "This venue"} has no pricing rule yet — add one in Venues first.`);
+          return;
+        }
         if (picked.length >= 5) return;
         const created = await apiFetch<ProposalVenue>(`/proposals/${proposal.id}/venues`, {
           method: "POST",
           body: JSON.stringify({
-            venue_id: entry.venue_id,
-            configuration_id: entry.configuration_id,
-            pricing_rules_id: entry.pricing_rules_id,
-            quote_breakdown: entry.quote_breakdown,
-            quote_total: entry.estimated_total,
+            venue_id: option.venue_id,
+            configuration_id: option.configuration_id,
+            pricing_rules_id: option.pricing_rules_id,
+            quote_breakdown: option.quote_breakdown,
+            quote_total: option.estimated_total,
             sort_order: picked.length,
-            recommended: false,
+            recommended: option.recommended,
           }),
         });
         setPicked((prev) => [...prev, created]);
@@ -257,6 +279,134 @@ export default function ProposalBuilderPage() {
     (venueId: string) => portfolio?.find((v) => v.id === venueId)?.name ?? "Venue",
     [portfolio],
   );
+
+  // Keep Step 4's editable copy + status in sync when the draft loads/changes.
+  useEffect(() => {
+    if (proposal) {
+      setIntroCopy(proposal.intro_copy ?? "");
+      setEmailCopy(proposal.personal_email_copy ?? "");
+      setProposalStatus(proposal.status);
+    }
+  }, [proposal]);
+
+  async function overrideTotal(pv: ProposalVenue, value: number) {
+    if (!proposal) return;
+    setSavingOverride(pv.id);
+    setVenuesError(null);
+    try {
+      const updated = await apiFetch<ProposalVenue>(
+        `/proposals/${proposal.id}/venues/${pv.id}`,
+        { method: "PATCH", body: JSON.stringify({ quote_total: value }) },
+      );
+      setPicked((prev) => prev.map((p) => (p.id === pv.id ? updated : p)));
+    } catch (err) {
+      setVenuesError(err instanceof ApiError ? err.message : "Couldn't save the override.");
+    } finally {
+      setSavingOverride(null);
+    }
+  }
+
+  async function generateIntro() {
+    if (!proposal) return;
+    setGeneratingCopy(true);
+    setError(null);
+    try {
+      const updated = await apiFetch<Proposal>(`/proposals/${proposal.id}/generate-intro-copy`, {
+        method: "POST",
+      });
+      setProposal(updated);
+      setIntroCopy(updated.intro_copy ?? "");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't draft copy (AI may be unavailable).");
+    } finally {
+      setGeneratingCopy(false);
+    }
+  }
+
+  async function saveIntro() {
+    if (!proposal) return;
+    setSavingCopy(true);
+    setError(null);
+    try {
+      const updated = await apiFetch<Proposal>(`/proposals/${proposal.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ intro_copy: introCopy }),
+      });
+      setProposal(updated);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't save the copy.");
+    } finally {
+      setSavingCopy(false);
+    }
+  }
+
+  async function createLink() {
+    if (!proposal) return;
+    setCreatingLink(true);
+    setError(null);
+    try {
+      const link = await apiFetch<ProposalLinkToken>(`/proposals/${proposal.id}/links`, {
+        method: "POST",
+      });
+      setShareToken(link.token);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't create the link.");
+    } finally {
+      setCreatingLink(false);
+    }
+  }
+
+  async function markSent() {
+    if (!proposal) return;
+    setSending(true);
+    setError(null);
+    try {
+      const updated = await apiFetch<Proposal>(`/proposals/${proposal.id}/send`, { method: "POST" });
+      setProposalStatus(updated.status);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't mark as sent.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function generateEmail() {
+    if (!proposal) return;
+    setGeneratingEmail(true);
+    setError(null);
+    try {
+      const updated = await apiFetch<Proposal>(`/proposals/${proposal.id}/generate-personal-email`, {
+        method: "POST",
+      });
+      setProposal(updated);
+      setEmailCopy(updated.personal_email_copy ?? "");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't draft the email (AI may be unavailable).");
+    } finally {
+      setGeneratingEmail(false);
+    }
+  }
+
+  function openInGmail() {
+    const to = encodeURIComponent(contact?.email ?? "");
+    const su = encodeURIComponent(`Proposal — ${brief?.event_type ?? "your event"}`);
+    const body = encodeURIComponent(emailCopy);
+    window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${su}&body=${body}`, "_blank");
+  }
+
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  async function downloadPdf() {
+    if (!proposal) return;
+    setDownloadingPdf(true);
+    setError(null);
+    try {
+      await apiDownload(`/proposals/${proposal.id}/pdf`, `Proposal_${proposalRef.replace("#", "")}.pdf`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't generate the PDF.");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
 
   const reqs = (brief?.requirements ?? {}) as Requirements;
   const captured = useMemo(() => {
@@ -516,19 +666,18 @@ export default function ProposalBuilderPage() {
               Pick venues by <span style={{ fontStyle: "italic", color: "var(--color-accent)" }}>feel and judgement.</span>
             </h2>
             <p style={{ color: "var(--color-text-secondary)", maxWidth: "640px", marginTop: 0 }}>
-              Browse the portfolio and select between 1 and 5 venues. No AI ranking, no scoring — the selection is yours.
-              &ldquo;Fits brief&rdquo; just means it&apos;s available and priced for this enquiry.
+              Browse the portfolio and select 1 to 5 venues. The selection is always yours — the best-fitting venues sort
+              first and the AI may flag a recommendation by feel, but nothing is blocked. Pick any venue by judgement.
             </p>
 
             {venuesError && (
               <p style={{ color: "var(--color-warning)", marginTop: "var(--space-4)" }}>{venuesError}</p>
             )}
 
-            {/* View toggle (category ribbon deferred until venues have a category column) */}
             <div style={{ display: "flex", gap: "var(--space-5)", borderBottom: "1px solid var(--color-border)", marginTop: "var(--space-6)" }}>
               {([
                 { key: "all" as const, label: "All venues", count: portfolio?.length ?? 0 },
-                { key: "fits" as const, label: "Fits brief", count: shortlist?.shortlist.length ?? 0 },
+                { key: "fits" as const, label: "Fits brief", count: options?.filter((o) => o.fits).length ?? 0 },
               ]).map((t) => {
                 const active = venueView === t.key;
                 return (
@@ -565,30 +714,34 @@ export default function ProposalBuilderPage() {
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "var(--space-6)", paddingBottom: "var(--space-10)" }}>
                 {portfolio
-                  .filter((v) => venueView === "all" || shortlist?.shortlist.some((s) => s.venue_id === v.id))
-                  .map((v) => {
-                    const entry = shortlist?.shortlist.find((s) => s.venue_id === v.id);
-                    const excluded = shortlist?.excluded.find((e) => e.venue_id === v.id);
+                  .map((v) => ({ v, option: options?.find((o) => o.venue_id === v.id) }))
+                  .filter(({ option }) => venueView === "all" || option?.fits)
+                  .sort((a, b) => (a.option?.sort_order ?? 999) - (b.option?.sort_order ?? 999))
+                  .map(({ v, option }) => {
                     const selected = picked.some((p) => p.venue_id === v.id);
-                    const addable = Boolean(entry?.pricing_rules_id && entry?.quote_breakdown != null && entry?.estimated_total != null);
+                    // Selectable regardless of fit; only truly unpriceable venues
+                    // (no pricing rule) can't attach to a proposal.
+                    const priceable = Boolean(
+                      option?.pricing_rules_id && option?.quote_breakdown != null && option?.estimated_total != null,
+                    );
+                    const disabled = !selected && !priceable;
                     const hero = v.venue_media.find((m) => m.kind === "photo")?.url ?? v.venue_media[0]?.url ?? null;
                     const cap =
-                      entry?.capacity ??
+                      option?.capacity ??
                       (v.venue_configurations.length ? Math.max(...v.venue_configurations.map((c) => c.capacity)) : null);
-                    const disabled = !selected && !addable;
                     return (
                       <button
                         key={v.id}
-                        onClick={() => toggleVenue(v.id, entry)}
+                        onClick={() => toggleVenue(v.id, option)}
                         disabled={disabled || togglingId === v.id}
-                        title={disabled ? excluded?.reason ?? "No pricing set for this brief" : undefined}
+                        title={disabled ? "No pricing rule set — add one in Venues first" : option?.fit_reasons.join(" · ")}
                         style={{
                           textAlign: "left",
                           padding: 0,
                           background: "var(--color-bg)",
                           border: `1px solid ${selected ? "var(--color-accent)" : "var(--color-border)"}`,
                           cursor: disabled ? "not-allowed" : "pointer",
-                          opacity: disabled ? 0.55 : 1,
+                          opacity: disabled ? 0.6 : 1,
                           overflow: "hidden",
                         }}
                       >
@@ -601,11 +754,20 @@ export default function ProposalBuilderPage() {
                               No photo yet
                             </div>
                           )}
-                          {entry && (
-                            <span style={{ position: "absolute", top: "var(--space-3)", left: "var(--space-3)", ...TAG, background: "var(--color-accent)", color: "#fff" }}>
-                              Fits brief
-                            </span>
-                          )}
+                          <div style={{ position: "absolute", top: "var(--space-3)", left: "var(--space-3)", display: "flex", gap: "6px" }}>
+                            {option?.recommended && (
+                              <span style={{ ...TAG, background: "var(--color-brass)", color: "#fff" }}>✦ EV pick</span>
+                            )}
+                            {option?.fits ? (
+                              <span style={{ ...TAG, background: "var(--color-accent)", color: "#fff" }}>Fits brief</span>
+                            ) : (
+                              option && (
+                                <span style={{ ...TAG, background: "rgba(27,42,74,0.75)", color: "#fff" }}>
+                                  {option.fit_reasons[0] ?? "Off-brief"}
+                                </span>
+                              )
+                            )}
+                          </div>
                           <span
                             style={{
                               position: "absolute",
@@ -632,7 +794,7 @@ export default function ProposalBuilderPage() {
                           </div>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "var(--color-text-secondary)", borderTop: "1px solid var(--color-border)", paddingTop: "var(--space-3)" }}>
                             <span>{cap ? `to ${cap}` : "Capacity TBD"}</span>
-                            {entry?.estimated_total != null && <span>HKD {entry.estimated_total.toLocaleString()}</span>}
+                            {option?.estimated_total != null && <span>HKD {option.estimated_total.toLocaleString()}</span>}
                           </div>
                         </div>
                       </button>
@@ -643,19 +805,259 @@ export default function ProposalBuilderPage() {
           </div>
         )}
 
-        {step > 2 && (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "40vh", textAlign: "center", color: "var(--color-text-muted)" }}>
-            <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.8rem", color: "var(--color-text-secondary)" }}>
-              {currentStep.label}
-            </div>
-            <p style={{ maxWidth: "440px" }}>
-              This step lands next. Its endpoints already exist —{" "}
-              {step === 3 && "per-venue pricing from the rules engine, with overrides"}
-              {step === 4 && "intro copy and the shareable web link"} — the builder just needs the screen.
+        {step === 3 && (
+          <div>
+            <div style={EYEBROW}>Step 03 · Generate pricing</div>
+            <h2 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "2.6rem", margin: "var(--space-3) 0 var(--space-2)" }}>
+              Rules engine. <span style={{ fontStyle: "italic", color: "var(--color-accent)" }}>Your final word.</span>
+            </h2>
+            <p style={{ color: "var(--color-text-secondary)", maxWidth: "640px", marginTop: 0 }}>
+              For each venue the engine reads its rule card and produces a transparent price — never the AI. Everything
+              is editable: override a total by hand, or reset it back to the engine.
             </p>
-            <button type="button" onClick={() => setStep(2)} style={{ marginTop: "var(--space-4)", background: "none", border: "1px solid var(--color-border)", padding: "var(--space-2) var(--space-4)", cursor: "pointer" }}>
-              ← Back to venues
-            </button>
+            {venuesError && <p style={{ color: "var(--color-warning)" }}>{venuesError}</p>}
+
+            {picked.length === 0 ? (
+              <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-6)" }}>
+                No venues selected — go back to Step 2 to shortlist some.
+              </p>
+            ) : (
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)", marginTop: "var(--space-6)" }}>
+                  {picked.map((pv, i) => {
+                    const v = portfolio?.find((x) => x.id === pv.venue_id);
+                    const hero =
+                      v?.venue_media.find((m) => m.kind === "photo")?.url ?? v?.venue_media[0]?.url ?? null;
+                    return (
+                      <PricingCard
+                        key={pv.id}
+                        index={i + 1}
+                        name={nameForVenue(pv.venue_id)}
+                        location={v?.district ?? null}
+                        heroUrl={hero}
+                        pv={pv}
+                        saving={savingOverride === pv.id}
+                        onOverride={(value) => overrideTotal(pv, value)}
+                      />
+                    );
+                  })}
+                </div>
+
+                <div style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", padding: "var(--space-6)", marginTop: "var(--space-8)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "var(--space-2)" }}>
+                    <h3 style={{ fontFamily: "var(--font-serif)", fontSize: "1.6rem", margin: 0 }}>
+                      All <span style={{ fontStyle: "italic", color: "var(--color-accent)" }}>{numberWord(picked.length)}</span> options priced
+                    </h3>
+                    <span style={{ fontSize: "0.75rem", fontStyle: "italic", color: "var(--color-text-muted)" }}>
+                      Update freely — totals stay live
+                    </span>
+                  </div>
+                  <div style={{ marginTop: "var(--space-4)" }}>
+                    {picked.map((pv) => (
+                      <div key={pv.id} style={{ display: "flex", justifyContent: "space-between", padding: "var(--space-3) 0", borderTop: "1px solid var(--color-border)" }}>
+                        <span style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontSize: "1.05rem" }}>
+                          {nameForVenue(pv.venue_id)}
+                        </span>
+                        <span style={{ fontWeight: 600 }}>
+                          HKD {pv.quote_total != null ? pv.quote_total.toLocaleString() : "—"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {step === 4 && (
+          <div>
+            <div style={EYEBROW}>Step 04 · Generate &amp; share</div>
+            <h2 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "2.6rem", margin: "var(--space-3) 0 var(--space-2)" }}>
+              One click. <span style={{ fontStyle: "italic", color: "var(--color-accent)" }}>Link generated, PDF ready.</span>
+            </h2>
+            <p style={{ color: "var(--color-text-secondary)", maxWidth: "680px", marginTop: 0 }}>
+              The branded proposal below <em>is</em> the PDF — &ldquo;Download PDF&rdquo; prints it. Draft the client note with
+              AI, then send it through Gmail. (Sending directly from EV is a later SMTP/API decision.)
+            </p>
+
+            {/* Generated banner */}
+            {picked.length > 0 &&
+              (() => {
+                const totals = picked.map((p) => p.quote_total).filter((t): t is number => t != null);
+                const lo = totals.length ? Math.min(...totals) : null;
+                const hi = totals.length ? Math.max(...totals) : null;
+                return (
+                  <div style={{ background: "var(--color-navy)", color: "var(--color-navy-text)", padding: "var(--space-6) var(--space-8)", marginTop: "var(--space-6)" }}>
+                    <div style={{ ...EYEBROW, color: "#fff", opacity: 0.7 }}>✓ Generated · ready to send</div>
+                    <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.9rem", marginTop: "var(--space-1)" }}>
+                      Your proposal for{" "}
+                      <span style={{ fontStyle: "italic", color: "#e0a3ad" }}>{clientName}</span> is live.
+                    </div>
+                    <div style={{ fontSize: "0.85rem", opacity: 0.75, marginTop: "var(--space-2)" }}>
+                      Proposal {proposalRef} · {picked.length} {picked.length === 1 ? "venue" : "venues"}
+                      {lo != null && hi != null ? ` · HKD ${lo.toLocaleString()} – ${hi.toLocaleString()}` : ""}
+                    </div>
+                  </div>
+                );
+              })()}
+
+            {/* Deliverables */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "var(--space-5)", marginTop: "var(--space-5)" }}>
+              <div style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", padding: "var(--space-6)" }}>
+                <div style={{ ...EYEBROW, color: "var(--color-accent)" }}>Deliverable · 01</div>
+                <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.5rem", margin: "2px 0 var(--space-4)" }}>
+                  Web <span style={{ fontStyle: "italic" }}>proposal</span>
+                </div>
+                {shareToken ? (
+                  <>
+                    <code style={{ display: "block", padding: "var(--space-3)", background: "var(--color-surface)", fontSize: "0.8rem", wordBreak: "break-all" }}>
+                      {typeof window !== "undefined" ? window.location.origin : ""}/p/{shareToken}
+                    </code>
+                    <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/p/${shareToken}`)}
+                        style={{ padding: "var(--space-2) var(--space-4)", border: "1px solid var(--color-navy)", background: "var(--color-navy)", color: "#fff", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: "pointer" }}
+                      >
+                        Copy link
+                      </button>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "var(--space-3)" }}>
+                      Public read-only page (G5) is still pending — the token + endpoint exist.
+                    </p>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={createLink}
+                    disabled={creatingLink}
+                    style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-navy)", background: "var(--color-navy)", color: "#fff", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: "pointer" }}
+                  >
+                    {creatingLink ? "Creating…" : "Generate link"}
+                  </button>
+                )}
+              </div>
+
+              <div style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", padding: "var(--space-6)" }}>
+                <div style={{ ...EYEBROW, color: "var(--color-accent)" }}>Deliverable · 02</div>
+                <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.5rem", margin: "2px 0 var(--space-4)" }}>
+                  PDF <span style={{ fontStyle: "italic" }}>document</span>
+                </div>
+                <p style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)", margin: "0 0 var(--space-4)" }}>
+                  A branded, standard-format proposal document. Preview it exactly as the client will see it, or save a PDF.
+                </p>
+                <div style={{ display: "flex", gap: "var(--space-3)" }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowPreview(true)}
+                    disabled={picked.length === 0}
+                    style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-border)", background: "var(--color-bg)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: picked.length ? "pointer" : "not-allowed" }}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadPdf}
+                    disabled={picked.length === 0 || downloadingPdf}
+                    style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-navy)", background: picked.length ? "var(--color-navy)" : "var(--color-surface)", color: picked.length ? "#fff" : "var(--color-text-muted)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: picked.length ? "pointer" : "not-allowed" }}
+                  >
+                    {downloadingPdf ? "Generating…" : "Download PDF"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Email note */}
+            <div style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", padding: "var(--space-6)", marginTop: "var(--space-5)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "var(--space-2)" }}>
+                <div>
+                  <div style={{ ...EYEBROW, color: "var(--color-accent)" }}>Send it</div>
+                  <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.5rem", marginTop: "2px" }}>
+                    A note to <span style={{ fontStyle: "italic" }}>{contact?.full_name?.split(" ")[0] ?? "the client"}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={generateEmail}
+                  disabled={generatingEmail}
+                  style={{ padding: "var(--space-2) var(--space-4)", border: "1px solid var(--color-accent)", background: "var(--color-bg)", color: "var(--color-accent)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: generatingEmail ? "default" : "pointer" }}
+                >
+                  {generatingEmail ? "Drafting…" : "✦ Draft with AI"}
+                </button>
+              </div>
+              <textarea
+                value={emailCopy}
+                onChange={(e) => setEmailCopy(e.target.value)}
+                rows={8}
+                placeholder="Concierge drafts a warm personal note here — review, edit, then send."
+                style={{ width: "100%", padding: "var(--space-4)", border: "1px solid var(--color-border)", background: "var(--color-surface)", font: "inherit", resize: "vertical", lineHeight: 1.7, marginTop: "var(--space-4)" }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
+                <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                  To {contact?.email ?? "the client"} · status: {proposalStatus}
+                </span>
+                <div style={{ display: "flex", gap: "var(--space-3)" }}>
+                  <button
+                    type="button"
+                    onClick={openInGmail}
+                    style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-border)", background: "var(--color-bg)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: "pointer" }}
+                  >
+                    Open in Gmail ↗
+                  </button>
+                  <button
+                    type="button"
+                    onClick={markSent}
+                    disabled={sending || proposalStatus === "sent"}
+                    style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-accent)", background: proposalStatus === "sent" ? "var(--color-surface)" : "var(--color-accent)", color: proposalStatus === "sent" ? "var(--color-text-muted)" : "#fff", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: proposalStatus === "sent" ? "default" : "pointer" }}
+                  >
+                    {proposalStatus === "sent" ? "✓ Sent" : sending ? "Sending…" : "Mark as sent"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Branded document. Kept mounted (off-screen) so "Download PDF"
+                (print) always has its target; "Preview" shows it as a modal. */}
+            <div
+              style={
+                showPreview
+                  ? { position: "fixed", inset: 0, zIndex: 100, background: "rgba(16,20,40,0.9)", overflowY: "auto", padding: "var(--space-8) var(--space-4)" }
+                  : { position: "fixed", left: "-10000px", top: 0, width: "820px" }
+              }
+            >
+              {showPreview && (
+                <button
+                  type="button"
+                  onClick={() => setShowPreview(false)}
+                  style={{ position: "fixed", top: "var(--space-4)", right: "var(--space-4)", zIndex: 101, padding: "var(--space-3) var(--space-4)", background: "var(--color-bg)", border: "1px solid var(--color-border)", fontSize: "0.65rem", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, cursor: "pointer" }}
+                >
+                  × Close preview
+                </button>
+              )}
+              <div style={{ maxWidth: "820px", margin: "0 auto" }}>
+                <ProposalDocument
+                  proposalRef={proposalRef}
+                  clientName={clientName}
+                  contactName={contact?.full_name ?? null}
+                  brief={brief}
+                  introCopy={introCopy}
+                  venues={picked.map((pv) => {
+                    const v = portfolio?.find((x) => x.id === pv.venue_id);
+                    return {
+                      name: v?.name ?? nameForVenue(pv.venue_id),
+                      district: v?.district ?? null,
+                      description: v?.description ?? null,
+                      images: (v?.venue_media ?? [])
+                        .filter((m) => m.kind === "photo" && m.url)
+                        .map((m) => m.url as string),
+                      breakdown: pv.quote_breakdown as unknown as Partial<QuoteBreakdown>,
+                      total: pv.quote_total,
+                    };
+                  })}
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -739,7 +1141,12 @@ export default function ProposalBuilderPage() {
           {(() => {
             const canAdvance =
               step === 1 ? Boolean(brief) : step === 2 ? picked.length >= 1 : step < 4;
-            const label = step === 1 ? "Continue to venues →" : step === 2 ? "Generate pricing →" : "Continue →";
+            const label =
+              step === 1
+                ? "Continue to venues →"
+                : step === 2
+                  ? "Generate pricing →"
+                  : "Generate proposal →";
             if (step >= 4) return null;
             return (
               <button
@@ -764,6 +1171,273 @@ export default function ProposalBuilderPage() {
           })()}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** One venue's quote as a reference-style "option" card: thumbnail + option
+ * header + Priced/Locked status, a line-item breakdown beside a navy total
+ * box, and a manual override (with reset-to-engine). The AI never touches
+ * pricing — this is the deterministic rules-engine output. */
+function PricingCard({
+  index,
+  name,
+  location,
+  heroUrl,
+  pv,
+  saving,
+  onOverride,
+}: {
+  index: number;
+  name: string;
+  location: string | null;
+  heroUrl: string | null;
+  pv: ProposalVenue;
+  saving: boolean;
+  onOverride: (value: number) => void;
+}) {
+  const qb = pv.quote_breakdown as unknown as Partial<QuoteBreakdown>;
+  const ccy = qb.currency ?? "HKD";
+  const [override, setOverride] = useState(pv.quote_total?.toString() ?? "");
+  const money = (n?: number | null) => (n == null ? "—" : `${ccy} ${Number(n).toLocaleString()}`);
+
+  const rows: [string, string][] = [];
+  if (qb.base_rate != null) rows.push(["Base rate", money(qb.base_rate)]);
+  if (qb.per_head_total != null) rows.push(["Per-head total", money(qb.per_head_total)]);
+  if (qb.day_adjustment_multiplier && qb.day_adjustment_multiplier !== 1)
+    rows.push(["Day adjustment", `× ${qb.day_adjustment_multiplier}`]);
+  if (qb.season_adjustment_multiplier && qb.season_adjustment_multiplier !== 1)
+    rows.push(["Season adjustment", `× ${qb.season_adjustment_multiplier}`]);
+  if (qb.duration_overtime_amount) rows.push(["Overtime", money(qb.duration_overtime_amount)]);
+  if (qb.addons_total) rows.push(["Add-ons", money(qb.addons_total)]);
+  if (qb.min_spend_applied) rows.push(["Minimum spend applied", "yes"]);
+
+  const overridden = qb.total != null && pv.quote_total !== qb.total;
+  const engineTotal = qb.total ?? null;
+
+  return (
+    <div style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", borderLeft: `3px solid var(--color-accent)` }}>
+      {/* Header row */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)", padding: "var(--space-4) var(--space-6)" }}>
+        <div style={{ width: "64px", height: "64px", flexShrink: 0, background: "var(--color-surface)", overflow: "hidden" }}>
+          {heroUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={heroUrl} alt={name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          )}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ ...EYEBROW, color: "var(--color-accent)" }}>Option · {String(index).padStart(2, "0")}</div>
+          <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.4rem" }}>{name}</div>
+          {location && <div style={{ fontSize: "0.82rem", color: "var(--color-text-muted)" }}>{location}</div>}
+        </div>
+        <span
+          style={{
+            ...TAG,
+            background: overridden ? "var(--color-navy)" : "#e7efe7",
+            color: overridden ? "#fff" : "#2f7a44",
+            whiteSpace: "nowrap",
+          }}
+        >
+          ● {overridden ? "Locked" : "Priced"}
+        </span>
+      </div>
+
+      {/* Breakdown + navy total box */}
+      <div style={{ display: "flex", flexWrap: "wrap", borderTop: "1px solid var(--color-border)" }}>
+        <div style={{ flex: "1 1 280px", padding: "var(--space-5) var(--space-6)" }}>
+          {rows.map(([k, v]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "var(--space-2) 0", fontSize: "0.9rem", color: "var(--color-text-secondary)", borderBottom: "1px solid var(--color-border)" }}>
+              <span>{k}</span>
+              <span>{v}</span>
+            </div>
+          ))}
+          {qb.addons && qb.addons.length > 0 && (
+            <div style={{ padding: "var(--space-3) 0 0", fontSize: "0.82rem", color: "var(--color-text-muted)" }}>
+              {qb.addons.map((a) => `${a.name} (${money(a.amount)})`).join(" · ")}
+            </div>
+          )}
+        </div>
+        <div style={{ flex: "0 0 200px", background: "var(--color-navy)", color: "var(--color-navy-text)", padding: "var(--space-5)", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ fontSize: "0.6rem", letterSpacing: "0.14em", textTransform: "uppercase", opacity: 0.7 }}>Total</div>
+          <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.9rem", marginTop: "2px" }}>{money(pv.quote_total)}</div>
+          {engineTotal != null && overridden && (
+            <div style={{ fontSize: "0.72rem", opacity: 0.6, marginTop: "4px" }}>engine: {money(engineTotal)}</div>
+          )}
+        </div>
+      </div>
+
+      {/* Override / reset */}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: "var(--space-3)", padding: "var(--space-4) var(--space-6)", borderTop: "1px solid var(--color-border)" }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ ...SECTION_LABEL, display: "block", marginBottom: "4px" }}>Final total ({ccy})</label>
+          <input
+            type="number"
+            min="0"
+            value={override}
+            onChange={(e) => setOverride(e.target.value)}
+            style={{ width: "100%", padding: "var(--space-2)", border: "1px solid var(--color-border)", background: "var(--color-bg)", font: "inherit" }}
+          />
+        </div>
+        {engineTotal != null && (
+          <button
+            type="button"
+            onClick={() => {
+              setOverride(String(engineTotal));
+              onOverride(engineTotal);
+            }}
+            disabled={saving}
+            style={{ padding: "var(--space-2) var(--space-4)", border: "1px solid var(--color-border)", background: "var(--color-bg)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}
+          >
+            Reset to engine
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => override && onOverride(Number(override))}
+          disabled={saving}
+          style={{ padding: "var(--space-2) var(--space-4)", border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "#fff", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}
+        >
+          {saving ? "Saving…" : "Lock price"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface DocVenue {
+  name: string;
+  district: string | null;
+  description: string | null;
+  images: string[];
+  breakdown: Partial<QuoteBreakdown>;
+  total: number | null;
+}
+
+/** The branded proposal document — a navy cover + one section per venue.
+ * This element (id="proposal-doc") is BOTH the on-screen preview and the
+ * print-to-PDF target: globals.css hides everything else during print, so
+ * the browser's "Save as PDF" produces exactly this. No PDF library needed. */
+function ProposalDocument({
+  proposalRef,
+  clientName,
+  contactName,
+  brief,
+  introCopy,
+  venues,
+}: {
+  proposalRef: string;
+  clientName: string;
+  contactName: string | null;
+  brief: Brief | null;
+  introCopy: string;
+  venues: DocVenue[];
+}) {
+  const money = (n?: number | null) => (n == null ? "—" : `HKD ${Number(n).toLocaleString()}`);
+  const window_ = formatWindow(brief);
+  const eventTitle = brief?.event_type ?? "Event Proposal";
+
+  const meta: [string, string][] = [
+    ["Guests", brief?.guest_count ? `${brief.guest_count} pax` : "—"],
+    ["Format", brief?.event_type ?? "—"],
+    ["Date", window_ ?? "—"],
+    ["Budget", budgetLine(brief) ?? "—"],
+  ];
+
+  return (
+    <div id="proposal-doc" style={{ border: "1px solid var(--color-border)", background: "#fff" }}>
+      {/* Cover */}
+      <div style={{ background: "var(--color-navy)", color: "var(--color-navy-text)", padding: "var(--space-12) var(--space-10)", minHeight: "420px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <span aria-hidden style={{ width: "40px", height: "40px", border: "1.5px solid var(--color-navy-text)", borderRadius: "5px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ width: "12px", height: "12px", borderRadius: "2px", background: "var(--color-navy-text)" }} />
+          </span>
+        </div>
+        <div>
+          <h1 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "2.4rem", color: "#e0a3ad", margin: 0, lineHeight: 1.2 }}>
+            {eventTitle} — <span style={{ fontStyle: "italic" }}>{clientName}</span>
+          </h1>
+          <div style={{ fontSize: "0.62rem", letterSpacing: "0.16em", textTransform: "uppercase", opacity: 0.7, marginTop: "var(--space-4)" }}>
+            Prepared for {clientName}
+            {window_ ? ` · ${window_}` : ""} · by Exclusive Venue
+          </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.6rem", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.55 }}>
+          <span>Exclusive Venue · Hong Kong</span>
+          <span>Proposal {proposalRef}</span>
+        </div>
+      </div>
+
+      {/* The brief */}
+      <div style={{ padding: "var(--space-8) var(--space-10)" }}>
+        <div style={{ ...SECTION_LABEL, color: "var(--color-accent)" }}>The brief</div>
+        {introCopy && (
+          <p style={{ fontFamily: "var(--font-serif)", fontSize: "1.15rem", lineHeight: 1.6, color: "var(--color-navy)", margin: "var(--space-3) 0 var(--space-6)", maxWidth: "620px" }}>
+            {introCopy}
+          </p>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", borderTop: "1px solid var(--color-border)" }}>
+          {meta.map(([k, v]) => (
+            <div key={k} style={{ padding: "var(--space-4) 0", borderRight: "1px solid var(--color-border)", paddingRight: "var(--space-4)" }}>
+              <div style={{ fontSize: "0.58rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>{k}</div>
+              <div style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontSize: "1.05rem", marginTop: "4px" }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* One section per venue */}
+      {venues.map((v, i) => {
+        const qb = v.breakdown ?? {};
+        const rows: [string, string][] = [];
+        if (qb.base_rate != null) rows.push(["Venue rental", money(qb.base_rate)]);
+        if (qb.per_head_total) rows.push(["Per-head catering", money(qb.per_head_total)]);
+        if (qb.duration_overtime_amount) rows.push(["Overtime", money(qb.duration_overtime_amount)]);
+        if (qb.addons_total) rows.push(["Add-ons", money(qb.addons_total)]);
+        return (
+          <div key={i} style={{ borderTop: "8px solid var(--color-surface)", breakInside: "avoid" }}>
+            <div style={{ width: "100%", height: "260px", background: "var(--color-surface)", overflow: "hidden" }}>
+              {v.images[0] && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={v.images[0]} alt={v.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              )}
+            </div>
+            <div style={{ padding: "var(--space-6) var(--space-10) var(--space-8)" }}>
+              <div style={{ ...SECTION_LABEL, color: "var(--color-accent)" }}>Option · {String(i + 1).padStart(2, "0")}</div>
+              <h2 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "2rem", margin: "2px 0 4px" }}>{v.name}</h2>
+              <div style={{ fontSize: "0.62rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>{v.district ?? "—"}</div>
+              {v.description && (
+                <p style={{ color: "var(--color-text-secondary)", lineHeight: 1.6, margin: "var(--space-4) 0", maxWidth: "620px" }}>{v.description}</p>
+              )}
+              {v.images.length > 1 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "var(--space-2)", margin: "var(--space-4) 0" }}>
+                  {v.images.slice(1, 4).map((src, j) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={j} src={src} alt="" style={{ width: "100%", height: "90px", objectFit: "cover" }} />
+                  ))}
+                </div>
+              )}
+              <div style={{ marginTop: "var(--space-4)" }}>
+                {rows.map(([k, val]) => (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "var(--space-2) 0", fontSize: "0.9rem", color: "var(--color-text-secondary)", borderBottom: "1px solid var(--color-border)" }}>
+                    <span>{k}</span>
+                    <span>{val}</span>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "var(--space-3) 0 0", fontFamily: "var(--font-serif)", fontSize: "1.2rem" }}>
+                  <span>Total</span>
+                  <span style={{ fontWeight: 600 }}>{money(v.total)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {venues.length === 0 && (
+        <div style={{ padding: "var(--space-10)", textAlign: "center", color: "var(--color-text-muted)" }}>
+          No venues on this proposal yet — add some in Step 2.
+        </div>
+      )}
     </div>
   );
 }

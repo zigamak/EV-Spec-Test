@@ -359,6 +359,25 @@ export interface ShortlistResponse {
   excluded: ExclusionReason[];
 }
 
+// Curate step (E3): every active venue as a selectable, priced option — fit
+// is advisory (`fits` + `fit_reasons`), not a gate. Fitting venues sort
+// first; `recommended` is the AI's description-based pick.
+export interface VenueOption {
+  venue_id: string;
+  venue_name: string;
+  configuration_id: string;
+  configuration_name: string;
+  capacity: number;
+  fits: boolean;
+  fit_reasons: string[];
+  estimated_total: number | null;
+  within_budget: boolean | null;
+  pricing_rules_id: string | null;
+  quote_breakdown: Record<string, unknown> | null;
+  recommended: boolean;
+  sort_order: number;
+}
+
 // --- Pricing rules (F1/F2) ---------------------------------------------
 
 export interface PricingRule {

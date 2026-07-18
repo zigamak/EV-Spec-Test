@@ -47,18 +47,40 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
   }
 }
 
+/** Bounce to login (preserving where we were) rather than surfacing a
+ * confusing inline "invalid session" when the token is gone/expired. */
+function redirectToLogin(): void {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname.startsWith("/app/login")) return;
+  const redirect = encodeURIComponent(window.location.pathname + window.location.search);
+  window.location.href = `/app/login?redirect=${redirect}`;
+}
+
 /**
  * Every FastAPI route is RLS-scoped to the caller's own session (see
  * api/app/core/scoped_client.py) — this just attaches that session's
  * access token, it doesn't decide what the caller can see or do.
+ *
+ * Keeps active users signed in: the access token is refreshed proactively
+ * when it's expired or within a minute of expiring, so an idle-then-active
+ * tab never fires a request with a stale token (the cause of surprise 401s).
+ * A 401 that still slips through (revoked/expired token the refresh couldn't
+ * save) redirects to login instead of erroring inline.
  */
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const supabase = createClient();
-  const {
+  let {
     data: { session },
   } = await supabase.auth.getSession();
 
+  // expires_at is a UNIX timestamp in seconds; refresh if inside a 60s buffer.
+  if (session?.expires_at && session.expires_at * 1000 < Date.now() + 60_000) {
+    const { data } = await supabase.auth.refreshSession();
+    session = data.session ?? session;
+  }
+
   if (!session) {
+    redirectToLogin();
     throw new ApiError(401, "Not signed in");
   }
 
@@ -72,6 +94,11 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     },
   });
 
+  if (response.status === 401) {
+    redirectToLogin();
+    throw new ApiError(401, "Session expired — please sign in again.");
+  }
+
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }));
     throw new ApiError(response.status, body.detail ?? "Request failed");
@@ -82,4 +109,42 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
 
   return response.json() as Promise<T>;
+}
+
+/** Authenticated file download (e.g. a server-rendered PDF): fetches the
+ * bytes with the session token, then triggers a browser download. */
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const supabase = createClient();
+  let {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (session?.expires_at && session.expires_at * 1000 < Date.now() + 60_000) {
+    const { data } = await supabase.auth.refreshSession();
+    session = data.session ?? session;
+  }
+  if (!session) {
+    redirectToLogin();
+    throw new ApiError(401, "Not signed in");
+  }
+
+  const response = await fetchWithTimeout(`${API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  if (response.status === 401) {
+    redirectToLogin();
+    throw new ApiError(401, "Session expired — please sign in again.");
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, "Download failed");
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }

@@ -23,10 +23,11 @@ from app.schemas.recommendation import (
     RestrictionCandidate,
     ShortlistResponse,
     VenueCandidate,
+    VenueOption,
 )
-from app.services.recommendation_engine import filter_venues, rerank_shortlist
+from app.services.recommendation_engine import evaluate_venues, filter_venues, rerank_shortlist
 
-router = APIRouter(prefix="/briefs/{brief_id}/shortlist", tags=["recommendations"])
+router = APIRouter(prefix="/briefs/{brief_id}", tags=["recommendations"])
 
 ScopedClient = Annotated[Client, Depends(get_scoped_client)]
 Staff = Annotated[StaffUser, Depends(require_staff_session)]
@@ -114,6 +115,7 @@ def _load_candidates(client: Client, event_date: str) -> list[VenueCandidate]:
                 venue_id=vid,
                 name=venue["name"],
                 status=venue["status"],
+                description=venue.get("description"),
                 configurations=[ConfigurationCandidate(**c) for c in configurations],
                 restrictions=[RestrictionCandidate(**r) for r in restrictions],
                 availability=[AvailabilityWindow(**a) for a in availability],
@@ -125,7 +127,7 @@ def _load_candidates(client: Client, event_date: str) -> list[VenueCandidate]:
     return candidates
 
 
-@router.get("", response_model=ShortlistResponse)
+@router.get("/shortlist", response_model=ShortlistResponse)
 def get_shortlist(brief_id: UUID, client: ScopedClient, _: Staff, rerank: bool = False):
     brief = _load_brief(client, brief_id)
     candidates = _load_candidates(client, brief.event_date.isoformat())
@@ -140,3 +142,15 @@ def get_shortlist(brief_id: UUID, client: ScopedClient, _: Staff, rerank: bool =
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Re-rank call failed: {exc}") from exc
 
     return ShortlistResponse(shortlist=shortlist, excluded=excluded)
+
+
+@router.get("/venue-options", response_model=list[VenueOption])
+def get_venue_options(brief_id: UUID, client: ScopedClient, _: Staff, recommend: bool = True):
+    """Curate step (task E3): EVERY active venue as a selectable, priced
+    option — fit is advisory, not a gate. Fitting venues sort first; with
+    `recommend` (default on) the AI flags a best pick by description. The AI
+    step is fail-soft inside the engine, so this endpoint doesn't 5xx on an
+    AI outage — it just returns the deterministic ordering."""
+    brief = _load_brief(client, brief_id)
+    candidates = _load_candidates(client, brief.event_date.isoformat())
+    return evaluate_venues(brief, candidates, recommend=recommend)

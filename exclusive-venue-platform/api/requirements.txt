@@ -29,6 +29,14 @@ supabase==2.31.0
 #   google-generativeai==0.8.3 (AI_PROVIDER=gemini — unverified, see llm.py)
 openai==2.45.0
 
+# Gemini currently active (AI_PROVIDER=gemini) — see api/.env.
+google-generativeai==0.8.3
+
+# Server-side proposal PDF (task G4) — renders the branded HTML in real
+# Chromium so the PDF is true to the on-screen design. Deploy step must run
+# `playwright install chromium` (+ OS deps) so the browser binary exists.
+playwright==1.61.0
+
 python-dotenv==1.0.1
 
 # Dev / test

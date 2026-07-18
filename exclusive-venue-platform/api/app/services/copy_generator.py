@@ -22,23 +22,95 @@ def generate_intro_copy(
     guest_count: int | None,
     event_date: str | None,
     organisation_name: str | None,
+    venue_names: list[str] | None = None,
 ) -> str:
-    details = ", ".join(
+    """Intro paragraph for the front of the proposal document. Grounded in
+    the ACTUAL venues selected (name + count) so it never says "a selection
+    of venues" when there's one — the count must match reality."""
+    names = venue_names or []
+    if len(names) == 0:
+        venue_clause = "the enclosed venue"
+        count_rule = "Refer to the venue in the singular."
+    elif len(names) == 1:
+        venue_clause = names[0]
+        count_rule = (
+            f"There is exactly ONE venue ({names[0]}) — refer to it in the singular, "
+            "never 'a selection of venues'."
+        )
+    else:
+        venue_clause = f"{len(names)} venues — {', '.join(names)}"
+        count_rule = (
+            f"There are exactly {len(names)} venues; refer to them in the plural and you may name them."
+        )
+
+    context = ", ".join(
         filter(
             None,
             [
-                f"event type: {event_type}" if event_type else None,
-                f"guest count: {guest_count}" if guest_count else None,
+                f"event: {event_type}" if event_type else None,
+                f"{guest_count} guests" if guest_count else None,
                 f"date: {event_date}" if event_date else None,
-                f"client organisation: {organisation_name}" if organisation_name else None,
+                f"client: {organisation_name}" if organisation_name else None,
             ],
         )
     )
     prompt = (
         f"{_BRAND_VOICE_PLACEHOLDER}\n\n"
-        "Write a short (2-3 sentence) introductory paragraph for a venue "
-        f"proposal. Known details: {details or 'none provided'}. "
-        "Do not invent specifics not given above."
+        "Write a short (2-3 sentence) introductory paragraph for the front of a venue proposal "
+        "document, presenting the selected venue(s) for this event. "
+        f"Context: {context or 'none provided'}. This proposal presents {venue_clause}. "
+        f"{count_rule} Reference the nature of the event. Do not invent amenities, prices, or specifics "
+        "not given above. Return only the paragraph."
+    )
+    return get_llm_client().generate_text(prompt)
+
+
+def generate_personal_email(
+    contact_name: str | None,
+    organisation_name: str | None,
+    event_type: str | None,
+    event_date: str | None,
+    venue_names: list[str],
+    proposal_link: str | None,
+) -> str:
+    """The personal note that accompanies a sent proposal (task G7) — lands
+    in the editable `personal_email_copy` column, a separate artifact from
+    the proposal's own intro_copy. Same non-authoritative stance: a draft a
+    human reviews and freely rewrites before anything is sent."""
+    first_name = contact_name.split()[0] if contact_name else "there"
+    venue_clause = (
+        f"the {len(venue_names)} options — {', '.join(venue_names)}"
+        if venue_names
+        else "a curated selection of venues"
+    )
+    prompt = "\n".join(
+        [
+            _BRAND_VOICE_PLACEHOLDER,
+            "",
+            "Write a warm, personal email from an event planner to a client, accompanying a venue "
+            "proposal you're sending them. Structure it as a real email:",
+            f"- Open with exactly 'Dear {first_name},' on its own line.",
+            "- A warm opening line referencing your recent conversation.",
+            "- State that you've prepared "
+            + venue_clause
+            + (f" for the {event_type}" if event_type else "")
+            + ", each suited to the format and feeling they described, with fully transparent pricing.",
+            (
+                f"- Mention the full proposal is here: {proposal_link}"
+                if proposal_link
+                else "- Mention the full proposal is included (web link inline and the PDF attached)."
+            ),
+            (
+                f"- Offer a soft hold on {event_date} if they'd like."
+                if event_date
+                else "- Offer to hold their preferred date."
+            ),
+            "- Close with 'With warm regards,' then the planner's first name on the next line.",
+            "",
+            f"{f'Client organisation: {organisation_name}. ' if organisation_name else ''}"
+            "Keep it to about 4 short paragraphs. Do not invent specifics not given above. "
+            "Return only the email body text.",
+        ]
     )
     return get_llm_client().generate_text(prompt)
 

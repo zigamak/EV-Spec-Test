@@ -42,6 +42,7 @@ class VenueCandidate(BaseModel):
     venue_id: UUID
     name: str
     status: str
+    description: str | None = None
     configurations: list[ConfigurationCandidate] = Field(default_factory=list)
     restrictions: list[RestrictionCandidate] = Field(default_factory=list)
     availability: list[AvailabilityWindow] = Field(default_factory=list)
@@ -75,3 +76,26 @@ class ExclusionReason(BaseModel):
 class ShortlistResponse(BaseModel):
     shortlist: list[ShortlistEntry]
     excluded: list[ExclusionReason]
+
+
+class VenueOption(BaseModel):
+    """Every active venue as a *selectable* option for the curate step (E3):
+    fit is advisory (`fits` + `fit_reasons`), never a gate. Priced for every
+    venue that has a rule, so any option can be added to a proposal straight
+    away; fitting options sort first and the AI may flag `recommended` ones
+    by description. Contrast ShortlistEntry, which drops non-fitting venues
+    entirely (the strict E1 contract)."""
+
+    venue_id: UUID
+    venue_name: str
+    configuration_id: UUID
+    configuration_name: str
+    capacity: int
+    fits: bool
+    fit_reasons: list[str] = Field(default_factory=list)
+    estimated_total: float | None = None
+    within_budget: bool | None = None
+    pricing_rules_id: UUID | None = None
+    quote_breakdown: dict[str, Any] | None = None
+    recommended: bool = False
+    sort_order: int = 0
