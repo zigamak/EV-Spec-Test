@@ -11,6 +11,13 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 VenueStatus = Literal["draft", "pending_approval", "active", "inactive"]
+VenueCategory = Literal[
+    "event_space",
+    "private_property",
+    "commercial_space",
+    "boats_yachts",
+    "member_club",
+]
 MediaKind = Literal["photo", "video", "floor_plan"]
 AvailabilityReason = Literal["booked", "hold", "maintenance", "landlord_blocked", "other"]
 RestrictionKind = Literal[
@@ -22,6 +29,7 @@ RestrictionKind = Literal[
     "no_red_wine",
     "other",
 ]
+FilmStatus = Literal["planned", "in_production", "delivered"]
 
 
 class VenueCreate(BaseModel):
@@ -30,6 +38,14 @@ class VenueCreate(BaseModel):
     description: str | None = None
     address: str | None = None
     district: str | None = None
+    category: VenueCategory | None = None
+    amenities: list[str] = Field(default_factory=list)
+    ideal_for: list[str] = Field(default_factory=list)
+    accepted_event_types: list[str] = Field(default_factory=list)
+    surface_area_sqft: float | None = None
+    room_count: int | None = None
+    access_note: str | None = None
+    view_note: str | None = None
     landlord_id: UUID | None = None
     status: VenueStatus = "draft"
     amenities: list[str] = Field(default_factory=list)
@@ -41,6 +57,14 @@ class VenueUpdate(BaseModel):
     description: str | None = None
     address: str | None = None
     district: str | None = None
+    category: VenueCategory | None = None
+    amenities: list[str] | None = None
+    ideal_for: list[str] | None = None
+    accepted_event_types: list[str] | None = None
+    surface_area_sqft: float | None = None
+    room_count: int | None = None
+    access_note: str | None = None
+    view_note: str | None = None
     status: VenueStatus | None = None
     hero_media_id: UUID | None = None
     amenities: list[str] | None = None
@@ -53,6 +77,14 @@ class Venue(BaseModel):
     description: str | None
     address: str | None
     district: str | None
+    category: VenueCategory | None
+    amenities: list[str]
+    ideal_for: list[str]
+    accepted_event_types: list[str]
+    surface_area_sqft: float | None
+    room_count: int | None
+    access_note: str | None
+    view_note: str | None
     landlord_id: UUID | None
     status: VenueStatus
     amenities: list[str] = Field(default_factory=list)
@@ -161,3 +193,101 @@ class VenueWithPortfolio(Venue):
 
     venue_media: list[VenueMedia] = Field(default_factory=list)
     venue_configurations: list[VenueConfiguration] = Field(default_factory=list)
+
+
+class VenueActivationCreate(BaseModel):
+    client_name: str = Field(min_length=1)
+    client_category: str | None = None
+    event_type: str | None = None
+    event_date: date | None = None
+    sort_order: int = 0
+
+
+class VenueActivationUpdate(BaseModel):
+    client_name: str | None = Field(default=None, min_length=1)
+    client_category: str | None = None
+    event_type: str | None = None
+    event_date: date | None = None
+    sort_order: int | None = None
+
+
+class VenueActivation(BaseModel):
+    id: UUID
+    venue_id: UUID
+    client_name: str
+    client_category: str | None
+    event_type: str | None
+    event_date: date | None
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class VenueFilmCreate(BaseModel):
+    title: str = Field(min_length=1)
+    duration_label: str | None = None
+    status: FilmStatus = "planned"
+    video_media_id: UUID | None = None
+    sort_order: int = 0
+
+
+class VenueFilmUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1)
+    duration_label: str | None = None
+    status: FilmStatus | None = None
+    video_media_id: UUID | None = None
+    sort_order: int | None = None
+
+
+class VenueFilm(BaseModel):
+    id: UUID
+    venue_id: UUID
+    title: str
+    duration_label: str | None
+    status: FilmStatus
+    video_media_id: UUID | None
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+    video_url: str | None = None
+
+
+class VenueTeamContactCreate(BaseModel):
+    name: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+    phone: str | None = None
+    email: str | None = None
+    sort_order: int = 0
+
+
+class VenueTeamContactUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    role: str | None = Field(default=None, min_length=1)
+    phone: str | None = None
+    email: str | None = None
+    sort_order: int | None = None
+
+
+class VenueTeamContact(BaseModel):
+    id: UUID
+    venue_id: UUID
+    name: str
+    role: str
+    phone: str | None
+    email: str | None
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class VenueWithProfile(Venue):
+    """`GET /venues/{id}/profile` embeds every relation the redesigned
+    Venue Profile page needs in one round trip (media, configurations,
+    activations, films, team contacts) — same N+1-avoidance rationale as
+    VenueWithPortfolio."""
+
+    venue_media: list[VenueMedia] = Field(default_factory=list)
+    venue_configurations: list[VenueConfiguration] = Field(default_factory=list)
+    venue_activations: list[VenueActivation] = Field(default_factory=list)
+    venue_films: list[VenueFilm] = Field(default_factory=list)
+    venue_team_contacts: list[VenueTeamContact] = Field(default_factory=list)

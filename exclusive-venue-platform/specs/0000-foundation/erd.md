@@ -35,7 +35,7 @@
 
 ## 4. Venue domain
 
-**`venues`** — id, name, slug UNIQUE, description, address, district, **landlord_id FK nullable** (null = EV-managed; set = P3 landlord-owned — the P3 RLS ownership path), **status** CHECK IN ('draft','pending_approval','active','inactive') — pending_approval = landlord submitted awaiting EV vetting; only 'active' venues visible to Concierge/proposals — approved_by, approved_at, hero_media_id.
+**`venues`** — id, name, slug UNIQUE, description, address, district, **category** (nullable CHECK IN ('event_space','private_property','commercial_space','boats_yachts','member_club') — the portfolio category ribbon, migration 0011), **amenities** (TEXT[] NOT NULL DEFAULT '{}' — free-form tags like "Rooftop", "Harbour view"; descriptive only, unlike venue_restrictions which the recommendation engine filters on — migration 0013), **landlord_id FK nullable** (null = EV-managed; set = P3 landlord-owned — the P3 RLS ownership path), **status** CHECK IN ('draft','pending_approval','active','inactive') — pending_approval = landlord submitted awaiting EV vetting; only 'active' venues visible to Concierge/proposals — approved_by, approved_at, hero_media_id.
 
 **`venue_configurations`** — venue layouts with capacities (seated 80 / cocktail 150 / theatre 120): venue_id FK CASCADE, name, **capacity** (the recommendation engine filters on this), notes.
 

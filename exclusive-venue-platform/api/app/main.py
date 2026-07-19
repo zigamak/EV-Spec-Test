@@ -15,12 +15,14 @@ from app.core.config import get_settings
 from app.core.logging_config import configure_logging
 from app.routers import (
     briefs,
+    contacts_directory,
     enquiries,
     pricing,
     proposals,
     public_proposals,
     recommendations,
     venue_media,
+    venue_profile,
     venues,
     webhooks,
 )
@@ -57,7 +59,9 @@ app.add_middleware(
 
 app.include_router(venues.router)
 app.include_router(venue_media.router)
+app.include_router(venue_profile.router)
 app.include_router(enquiries.router)
+app.include_router(contacts_directory.router)
 app.include_router(briefs.router)
 app.include_router(pricing.router)
 app.include_router(recommendations.router)

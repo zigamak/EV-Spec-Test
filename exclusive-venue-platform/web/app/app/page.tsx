@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import {
   ENQUIRY_STAGES,
@@ -10,21 +10,82 @@ import {
   STATUS_COLOR,
   STATUS_LABEL,
   type Brief,
-  type Contact,
   type EnquiryStage,
   type EnquiryStatus,
   type EnquiryWithBriefs,
-  type Organisation,
 } from "@/lib/api/types";
-import { avatarColorForId, daysSince } from "@/lib/utils";
-import { TEAM } from "@/lib/team";
+import { daysSince, daysUntil } from "@/lib/utils";
+import { OWNER_COLOR, TEAM, WHOLE_TEAM, initialsFromName } from "@/lib/team";
 import NewEnquiryModal from "./NewEnquiryModal";
 
 interface BoardCard {
   enquiry: EnquiryWithBriefs;
   brief: Brief | null;
-  brand: string;
-  owner: string | null;
+}
+
+// Per-stage accent — reuses existing brand tokens only (no new hues), so a
+// glance at the left rail of a card tells you its stage even mid-scroll.
+// Ordered to read as a "temperature" that warms as a deal closes: neutral →
+// brass (in motion) → navy (formal/proposed) → amber (pending decision) →
+// success (won).
+const STAGE_ACCENT: Record<EnquiryStage, string> = {
+  enquiry: "var(--color-text-muted)",
+  briefed: "var(--color-brass)",
+  proposed: "var(--color-navy)",
+  held: "var(--color-warning)",
+  signed: "var(--color-success)",
+  lost: "var(--color-text-muted)",
+};
+
+// Mirrors api/app/services/stage_machine.py's ALLOWED_TRANSITIONS — used
+// client-side only to decide which columns light up as valid drop targets
+// while dragging (a UI nicety). The API re-validates every transition
+// server-side regardless (trust boundary: the stage machine is the
+// deterministic authority, this is just so a bad drop doesn't even look
+// droppable), so this list drifting stale would fail safe as a rejected
+// drop with a clear error, never a silent bad write.
+const ALLOWED_TRANSITIONS: Record<EnquiryStage, EnquiryStage[]> = {
+  enquiry: ["briefed", "lost"],
+  briefed: ["proposed", "lost"],
+  proposed: ["held", "signed", "lost"],
+  held: ["signed", "proposed", "lost"],
+  signed: [],
+  lost: [],
+};
+
+// Stalled: no stage movement in this many days — a real signal from
+// enquiries.updated_at, not a fabricated field. Event-soon: the brief's
+// own date window is this close and the deal still isn't held/signed.
+const STALL_THRESHOLD_DAYS = 10;
+const EVENT_SOON_DAYS = 14;
+
+type SortKey = "recent" | "event_date" | "value" | "days_in_stage";
+
+const SORT_LABEL: Record<SortKey, string> = {
+  recent: "Recent activity",
+  event_date: "Event date (soonest)",
+  value: "Value (highest)",
+  days_in_stage: "Days in stage (longest)",
+};
+
+function sortStageCards(list: BoardCard[], sortBy: SortKey): BoardCard[] {
+  if (sortBy === "recent") return list;
+  const sorted = [...list];
+  if (sortBy === "value") {
+    sorted.sort((a, b) => (b.brief?.budget_amount ?? 0) - (a.brief?.budget_amount ?? 0));
+  } else if (sortBy === "days_in_stage") {
+    sorted.sort((a, b) => daysSince(b.enquiry.updated_at) - daysSince(a.enquiry.updated_at));
+  } else if (sortBy === "event_date") {
+    sorted.sort((a, b) => {
+      const da = a.brief?.date_window_start;
+      const db = b.brief?.date_window_start;
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      return da.localeCompare(db);
+    });
+  }
+  return sorted;
 }
 
 const pillStyle: React.CSSProperties = {
@@ -36,37 +97,77 @@ const pillStyle: React.CSSProperties = {
   fontSize: "0.85rem",
 };
 
-const STAGE_SUBTITLE: Record<EnquiryStage, string> = {
-  enquiry: "Brief received",
-  briefed: "AI processed",
-  proposed: "Sent to client",
-  held: "Soft-hold placed",
-  signed: "Contract done",
-  lost: "",
-};
-
-// Per-stage accent (column top border + card left border), matching the
-// reference's grey → brass → gold → burgundy → green progression.
-const STAGE_ACCENT: Record<EnquiryStage, string> = {
-  enquiry: "#8a8f99",
-  briefed: "var(--color-brass)",
-  proposed: "#c9a24a",
-  held: "var(--color-accent)",
-  signed: "var(--color-success)",
-  lost: "var(--color-text-muted)",
-};
-
-function fmtMoney(n: number): string {
-  if (n >= 1_000_000) return `HK$ ${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
-  if (n >= 1000) return `HK$ ${Math.round(n / 1000)}k`;
-  return `HK$ ${n.toLocaleString()}`;
+function GuestIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
 }
 
-/** Pipeline Board (task H2) — Kanban by stage over enquiries + their latest
- * brief, reworked toward the "Pipeline · deals" reference: owner filter
- * (the forward-to owner), per-column value totals, and cards showing brand,
- * value, owner, and urgency. "lost" is collapsed out of the board. Stage
- * transitions (proposed → held/signed) are handled elsewhere (task H1). */
+function CalendarIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  );
+}
+
+function FilterIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+    </svg>
+  );
+}
+
+function SortIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M11 5h10M11 9h7M11 13h4M3 17l3 3 3-3M6 18V4" />
+    </svg>
+  );
+}
+
+function WarningIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+      <path d="M12 9v4M12 17h.01" />
+    </svg>
+  );
+}
+
+/** Pipeline Board (task H2) — the dashboard home, no separate overview page
+ * (route-architecture.md). Kanban columns by stage; each card surfaces the
+ * fields a salesperson needs at a glance (event type/guests/date/budget)
+ * pulled from the enquiry's latest brief, not just a bare stage/name list.
+ * "lost" enquiries are collapsed out of the main board. Visual direction
+ * reworked 16 Jul toward client-shared reference screenshots, then given a
+ * quality pass (19 Jul) for elevation/typography/motion polish — same brand
+ * tokens throughout, no new colors or fonts introduced. */
 export default function PipelineBoardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -74,27 +175,37 @@ export default function PipelineBoardPage() {
   const [error, setError] = useState<string | null>(null);
   const [showNewEnquiry, setShowNewEnquiry] = useState(false);
   const [search, setSearch] = useState("");
+  // Status-rollup filter (task H3, 18 Jul) — Open/Awaiting/Won/Lost is the
+  // reference-workflow-facing view layered on top of the granular stage
+  // columns below; click a pill to see which enquiries are in that bucket
+  // without leaving the board. null = show every status (default).
   const [statusFilter, setStatusFilter] = useState<EnquiryStatus | null>(null);
-  const [ownerFilter, setOwnerFilter] = useState<string | null>(null);
+  // Salesperson/agent filter (forwarded_to — the real hand-off name, not
+  // the unused assigned_to auth-id field). Sits alongside the status
+  // rollup rather than replacing it: "who's it with" and "how far along"
+  // are independent questions a manager asks about the same board.
+  const [ownerFilter, setOwnerFilter] = useState<string>(WHOLE_TEAM);
+  const [sortBy, setSortBy] = useState<SortKey>("recent");
+  // Drag-and-drop stage moves (task PM1) — the id currently being dragged
+  // (null when nothing is), which column is currently a valid hover target,
+  // and a transient action error banner for a rejected transition (e.g. an
+  // illegal stage jump, or a network hiccup). transitioningId disables
+  // interaction on the one card in flight rather than the whole board.
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<EnquiryStage | "lost" | null>(null);
+  const [transitioningId, setTransitioningId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const suppressClickRef = useRef(false);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [enquiries, contacts, orgs] = await Promise.all([
-        apiFetch<EnquiryWithBriefs[]>("/enquiries"),
-        apiFetch<Contact[]>("/contacts"),
-        apiFetch<Organisation[]>("/organisations"),
-      ]);
-      const contactsById = new Map(contacts.map((c) => [c.id, c]));
-      const orgsById = new Map(orgs.map((o) => [o.id, o]));
-      const built = enquiries.map((enquiry) => {
-        const brief = [...enquiry.briefs].sort((a, b) => b.version - a.version)[0] ?? null;
-        const contact = enquiry.contact_id ? contactsById.get(enquiry.contact_id) ?? null : null;
-        const org = contact?.organisation_id ? orgsById.get(contact.organisation_id) ?? null : null;
-        const brand = org?.name ?? contact?.full_name ?? brief?.event_type ?? "Untitled";
-        return { enquiry, brief, brand, owner: enquiry.forwarded_to };
-      });
-      setCards(built);
+      const enquiries = await apiFetch<EnquiryWithBriefs[]>("/enquiries");
+      const withBriefs = enquiries.map((enquiry) => ({
+        enquiry,
+        brief: [...enquiry.briefs].sort((a, b) => b.version - a.version)[0] ?? null,
+      }));
+      setCards(withBriefs);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load pipeline");
     }
@@ -105,24 +216,97 @@ export default function PipelineBoardPage() {
   }, [load]);
 
   useEffect(() => {
+    if (!actionError) return;
+    const t = setTimeout(() => setActionError(null), 5000);
+    return () => clearTimeout(t);
+  }, [actionError]);
+
+  useEffect(() => {
     if (searchParams.get("new") === "1") {
       setShowNewEnquiry(true);
       router.replace("/app");
     }
   }, [searchParams, router]);
 
-  const visibleCards = useMemo(() => {
-    let list = cards ?? [];
-    const q = search.trim().toLowerCase();
-    if (q) {
-      list = list.filter(
-        (c) => c.brand.toLowerCase().includes(q) || c.brief?.event_type?.toLowerCase().includes(q),
-      );
-    }
-    if (ownerFilter) list = list.filter((c) => c.owner === ownerFilter);
-    return list;
-  }, [cards, search, ownerFilter]);
+  const columns: EnquiryStage[] = ENQUIRY_STAGES;
 
+  // The stage machine (api/app/services/stage_machine.py via
+  // POST /enquiries/{id}/transition) is the sole authority on whether a
+  // move is legal — this just reports the outcome and refreshes the board;
+  // it never mutates stage locally ahead of the server confirming.
+  const runTransition = useCallback(
+    async (enquiryId: string, stage: EnquiryStage | "lost", lostReason?: string) => {
+      setActionError(null);
+      setTransitioningId(enquiryId);
+      try {
+        await apiFetch(`/enquiries/${enquiryId}/transition`, {
+          method: "POST",
+          body: JSON.stringify({ stage, lost_reason: lostReason ?? null }),
+        });
+        await load();
+      } catch (err) {
+        setActionError(err instanceof ApiError ? err.message : "Could not move this enquiry.");
+      } finally {
+        setTransitioningId(null);
+      }
+    },
+    [load],
+  );
+
+  const reassign = useCallback(
+    async (enquiryId: string, forwardedTo: string | null) => {
+      setActionError(null);
+      try {
+        await apiFetch(`/enquiries/${enquiryId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ forwarded_to: forwardedTo }),
+        });
+        await load();
+      } catch (err) {
+        setActionError(err instanceof ApiError ? err.message : "Could not reassign this enquiry.");
+      }
+    },
+    [load],
+  );
+
+  const handleDrop = useCallback(
+    (target: EnquiryStage | "lost") => {
+      const id = draggingId;
+      setDraggingId(null);
+      setDropTarget(null);
+      if (!id) return;
+      const card = cards?.find((c) => c.enquiry.id === id);
+      if (!card || card.enquiry.stage === target) return;
+      if (!ALLOWED_TRANSITIONS[card.enquiry.stage].includes(target as EnquiryStage)) {
+        setActionError(`Can't move from ${STAGE_LABEL[card.enquiry.stage]} straight to ${target === "lost" ? "Lost" : STAGE_LABEL[target]}.`);
+        return;
+      }
+      if (target === "lost") {
+        const reason = window.prompt("Reason for marking this enquiry lost:");
+        if (!reason) return;
+        runTransition(id, "lost", reason);
+        return;
+      }
+      runTransition(id, target);
+    },
+    [draggingId, cards, runTransition],
+  );
+
+  const visibleCards = useMemo(() => {
+    if (!cards) return [];
+    const q = search.trim().toLowerCase();
+    if (!q) return cards;
+    return cards.filter(
+      (c) =>
+        c.brief?.event_type?.toLowerCase().includes(q) ||
+        c.enquiry.channel.toLowerCase().includes(q),
+    );
+  }, [cards, search]);
+
+  // Status counts computed over every visible card (including "lost") so
+  // the summary bar reflects the whole pipeline, not just the active board
+  // below it — this is the answer to "what's the flow, is it open": every
+  // enquiry's rollup status, at a glance, before you dig into stage columns.
   const statusCounts = useMemo(() => {
     const counts: Record<EnquiryStatus, number> = { open: 0, awaiting: 0, won: 0, lost: 0 };
     for (const c of visibleCards) counts[c.enquiry.status]++;
@@ -134,42 +318,109 @@ export default function PipelineBoardPage() {
     [visibleCards, statusFilter],
   );
 
+  // Counted over statusFilteredCards (search + status rollup applied, owner
+  // not yet applied) so the pill row's own counts stay stable while you
+  // click between salespeople — same pattern as statusCounts above.
+  const ownerCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const c of statusFilteredCards) {
+      if (c.enquiry.forwarded_to) counts[c.enquiry.forwarded_to] = (counts[c.enquiry.forwarded_to] ?? 0) + 1;
+    }
+    return counts;
+  }, [statusFilteredCards]);
+
+  const ownerFilteredCards = useMemo(
+    () =>
+      ownerFilter === WHOLE_TEAM
+        ? statusFilteredCards
+        : statusFilteredCards.filter((c) => c.enquiry.forwarded_to === ownerFilter),
+    [statusFilteredCards, ownerFilter],
+  );
+
   const activeCards = useMemo(
-    () => statusFilteredCards.filter((c) => c.enquiry.stage !== "lost"),
-    [statusFilteredCards],
+    () => ownerFilteredCards.filter((c) => c.enquiry.stage !== "lost"),
+    [ownerFilteredCards],
   );
   const pipelineValue = useMemo(
     () => activeCards.reduce((sum, c) => sum + (c.brief?.budget_amount ?? 0), 0),
     [activeCards],
   );
-  const managerCount = useMemo(
-    () => new Set(activeCards.map((c) => c.owner).filter(Boolean)).size,
-    [activeCards],
-  );
 
   return (
     <main style={{ padding: "var(--space-8)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "var(--space-4)" }}>
+      <style>{`
+        .pv-input { transition: border-color var(--transition-fast), box-shadow var(--transition-fast); }
+        .pv-input:focus { outline: none; border-color: var(--color-navy) !important; box-shadow: 0 0 0 3px rgba(27, 42, 74, 0.10); }
+        .pv-btn-ghost { transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast); cursor: pointer; }
+        .pv-btn-ghost:hover { background: var(--color-surface); border-color: var(--color-text-muted) !important; }
+        .pv-btn-primary { transition: background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast); }
+        .pv-btn-primary:hover { background: var(--color-accent-hover); box-shadow: var(--shadow-md); }
+        .pv-btn-primary:active { transform: translateY(1px); }
+        .pv-pill { transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast); cursor: pointer; }
+        .pv-pill:hover { box-shadow: var(--shadow-sm); }
+        .pv-card { transition: box-shadow var(--transition-base), transform var(--transition-base), border-color var(--transition-base); box-shadow: var(--shadow-sm); }
+        .pv-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); border-color: var(--color-text-muted) !important; }
+        .pv-lost-row { transition: box-shadow var(--transition-base), border-color var(--transition-base); }
+        .pv-lost-row:hover { box-shadow: var(--shadow-sm); border-color: var(--color-text-muted) !important; }
+        .pv-board::-webkit-scrollbar { height: 8px; }
+        .pv-board::-webkit-scrollbar-track { background: transparent; }
+        .pv-board::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: var(--radius-pill); }
+      `}</style>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", paddingBottom: "var(--space-6)", borderBottom: "1px solid var(--color-border)" }}>
         <div>
-          <h1 style={{ margin: 0, fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "2rem" }}>
-            Pipeline · <span style={{ fontStyle: "italic", color: "var(--color-accent)" }}>deals</span>
+          <h1 style={{ margin: 0, fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "2.1rem", color: "var(--color-text-primary)", letterSpacing: "-0.01em" }}>
+            Pipeline
           </h1>
           {cards !== null && (
-            <p style={{ color: "var(--color-text-secondary)", margin: "var(--space-1) 0 0" }}>
-              {activeCards.length} active deals · {fmtMoney(pipelineValue)} total
-              {managerCount > 0 ? ` · piloted by ${managerCount} account manager${managerCount === 1 ? "" : "s"}` : ""}
+            <p style={{ color: "var(--color-text-secondary)", margin: "var(--space-2) 0 0", fontSize: "0.92rem" }}>
+              {activeCards.length} active enquir{activeCards.length === 1 ? "y" : "ies"} &middot;{" "}
+              <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600, color: "var(--color-text-primary)" }}>
+                HKD {pipelineValue.toLocaleString()}
+              </span>{" "}
+              pipeline value
             </p>
           )}
         </div>
         <div style={{ display: "flex", gap: "var(--space-3)", alignItems: "center" }}>
-          <input
-            placeholder="Search…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ ...pillStyle, width: "180px" }}
-          />
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: "var(--space-4)", top: "50%", transform: "translateY(-50%)", color: "var(--color-text-muted)", pointerEvents: "none" }}>
+              <SearchIcon />
+            </span>
+            <input
+              placeholder="Search enquiries…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pv-input"
+              style={{ ...pillStyle, width: "220px", paddingLeft: "var(--space-8)" }}
+            />
+          </div>
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <span style={{ position: "absolute", left: "var(--space-4)", color: "var(--color-text-muted)", pointerEvents: "none" }}>
+              <SortIcon />
+            </span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortKey)}
+              className="pv-input"
+              style={{
+                ...pillStyle,
+                paddingLeft: "var(--space-8)",
+                paddingRight: "var(--space-4)",
+                cursor: "pointer",
+                appearance: "none",
+              }}
+            >
+              {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
+                <option key={k} value={k}>
+                  {SORT_LABEL[k]}
+                </option>
+              ))}
+            </select>
+          </div>
           <button
             onClick={() => setShowNewEnquiry(true)}
+            className="pv-btn-primary"
             style={{
               padding: "var(--space-2) var(--space-5)",
               background: "var(--color-accent)",
@@ -178,6 +429,8 @@ export default function PipelineBoardPage() {
               borderRadius: "var(--radius-pill)",
               cursor: "pointer",
               fontWeight: 600,
+              fontSize: "0.9rem",
+              boxShadow: "var(--shadow-sm)",
             }}
           >
             + New Enquiry
@@ -185,49 +438,13 @@ export default function PipelineBoardPage() {
         </div>
       </div>
 
-      {/* Owner filter */}
       {cards !== null && (
-        <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", marginTop: "var(--space-5)", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "0.62rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-text-muted)", marginRight: "var(--space-2)" }}>
-            Owner
-          </span>
-          {[null, ...TEAM.map((m) => m.name)].map((name) => {
-            const active = ownerFilter === name;
-            const label = name ? name.split(" ")[0] : "All";
-            return (
-              <button
-                key={name ?? "all"}
-                onClick={() => setOwnerFilter(name)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "var(--space-2) var(--space-4)",
-                  borderRadius: "var(--radius-pill)",
-                  border: `1px solid ${active ? "var(--color-navy)" : "var(--color-border)"}`,
-                  background: active ? "var(--color-surface)" : "var(--color-bg)",
-                  cursor: "pointer",
-                  fontSize: "0.8rem",
-                  fontWeight: active ? 700 : 400,
-                }}
-              >
-                {name && (
-                  <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: avatarColorForId(name) }} />
-                )}
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Status rollup pills */}
-      {cards !== null && (
-        <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-4)", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-6)" }}>
           {(["open", "awaiting", "won", "lost"] as EnquiryStatus[]).map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter((current) => (current === s ? null : s))}
+              className="pv-pill"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -236,110 +453,532 @@ export default function PipelineBoardPage() {
                 borderRadius: "var(--radius-pill)",
                 border: statusFilter === s ? `1px solid ${STATUS_COLOR[s]}` : "1px solid var(--color-border)",
                 background: statusFilter === s ? "var(--color-surface)" : "var(--color-bg)",
-                cursor: "pointer",
                 fontSize: "0.85rem",
+                boxShadow: statusFilter === s ? "var(--shadow-sm)" : "none",
               }}
+              title={`${STATUS_LABEL[s]}: ${statusCounts[s]} enquir${statusCounts[s] === 1 ? "y" : "ies"}`}
             >
-              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: STATUS_COLOR[s], display: "inline-block" }} />
-              <span style={{ color: "var(--color-text-primary)", fontWeight: statusFilter === s ? 700 : 400 }}>{STATUS_LABEL[s]}</span>
-              <span style={{ color: "var(--color-text-secondary)" }}>{statusCounts[s]}</span>
+              <span
+                style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  background: STATUS_COLOR[s],
+                  display: "inline-block",
+                }}
+              />
+              <span style={{ color: "var(--color-text-primary)", fontWeight: statusFilter === s ? 700 : 500 }}>
+                {STATUS_LABEL[s]}
+              </span>
+              <span style={{ color: "var(--color-text-secondary)", fontVariantNumeric: "tabular-nums" }}>{statusCounts[s]}</span>
             </button>
           ))}
+          {statusFilter && (
+            <button
+              onClick={() => setStatusFilter(null)}
+              className="pv-btn-ghost"
+              style={{ ...pillStyle, color: "var(--color-text-muted)", border: "1px solid transparent" }}
+            >
+              Clear filter
+            </button>
+          )}
         </div>
       )}
 
-      {error && <p style={{ color: "var(--color-danger)", marginTop: "var(--space-4)" }}>{error}</p>}
+      {cards !== null && (
+        <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-3)", alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginRight: "2px" }}>
+            Salesperson
+          </span>
+          <button
+            onClick={() => setOwnerFilter(WHOLE_TEAM)}
+            className="pv-pill"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              padding: "var(--space-1) var(--space-3)",
+              borderRadius: "var(--radius-pill)",
+              border: ownerFilter === WHOLE_TEAM ? "1px solid var(--color-navy)" : "1px solid var(--color-border)",
+              background: ownerFilter === WHOLE_TEAM ? "var(--color-surface)" : "var(--color-bg)",
+              fontSize: "0.8rem",
+              boxShadow: ownerFilter === WHOLE_TEAM ? "var(--shadow-sm)" : "none",
+            }}
+          >
+            <span style={{ color: "var(--color-text-primary)", fontWeight: ownerFilter === WHOLE_TEAM ? 700 : 500 }}>
+              {WHOLE_TEAM}
+            </span>
+          </button>
+          {TEAM.map((member) => {
+            const active = ownerFilter === member.name;
+            const color = OWNER_COLOR[member.name] ?? "var(--color-text-secondary)";
+            const count = ownerCounts[member.name] ?? 0;
+            return (
+              <button
+                key={member.name}
+                onClick={() => setOwnerFilter((current) => (current === member.name ? WHOLE_TEAM : member.name))}
+                className="pv-pill"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "var(--space-2)",
+                  padding: "var(--space-1) var(--space-3)",
+                  borderRadius: "var(--radius-pill)",
+                  border: active ? `1px solid ${color}` : "1px solid var(--color-border)",
+                  background: active ? "var(--color-surface)" : "var(--color-bg)",
+                  fontSize: "0.8rem",
+                  boxShadow: active ? "var(--shadow-sm)" : "none",
+                }}
+                title={`${member.name} · ${member.role}`}
+              >
+                <span
+                  style={{
+                    width: "16px",
+                    height: "16px",
+                    borderRadius: "50%",
+                    background: color,
+                    color: "#fff",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "0.55rem",
+                    fontWeight: 700,
+                    flexShrink: 0,
+                  }}
+                >
+                  {initialsFromName(member.name)}
+                </span>
+                <span style={{ color: "var(--color-text-primary)", fontWeight: active ? 700 : 500 }}>{member.name}</span>
+                <span style={{ color: "var(--color-text-secondary)", fontVariantNumeric: "tabular-nums" }}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {error && (
+        <p style={{ color: "var(--color-danger)", marginTop: "var(--space-4)" }}>{error}</p>
+      )}
       {!error && cards === null && (
         <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)" }}>Loading…</p>
       )}
+      {actionError && (
+        <div
+          style={{
+            marginTop: "var(--space-4)",
+            padding: "var(--space-3) var(--space-4)",
+            background: "var(--color-bg)",
+            border: "1px solid var(--color-danger)",
+            borderRadius: "var(--radius-md)",
+            color: "var(--color-danger)",
+            fontSize: "0.85rem",
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-2)",
+          }}
+        >
+          <WarningIcon />
+          {actionError}
+        </div>
+      )}
 
-      {/* Lost: flat list, no column */}
+      {/* Only shown mid-drag — a slim always-reachable target for the one
+          transition that has no kanban column of its own ("lost" is
+          collapsed out of the board per H2, but is still a valid drop
+          target from any non-terminal stage). */}
+      {draggingId && (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDropTarget("lost");
+          }}
+          onDragLeave={() => setDropTarget((t) => (t === "lost" ? null : t))}
+          onDrop={(e) => {
+            e.preventDefault();
+            handleDrop("lost");
+          }}
+          style={{
+            marginTop: "var(--space-4)",
+            padding: "var(--space-3)",
+            textAlign: "center",
+            fontSize: "0.8rem",
+            fontWeight: 600,
+            color: dropTarget === "lost" ? "#fff" : "var(--color-danger)",
+            background: dropTarget === "lost" ? "var(--color-danger)" : "var(--color-bg)",
+            border: `1px dashed var(--color-danger)`,
+            borderRadius: "var(--radius-md)",
+            transition: "background var(--transition-fast), color var(--transition-fast)",
+          }}
+        >
+          Drop here to mark as Lost
+        </div>
+      )}
+
+      {/* "lost" has no kanban column (it's collapsed out of activeCards by
+          design, per H2) — clicking the Lost pill shows a flat list instead
+          of an empty board. */}
       {cards !== null && statusFilter === "lost" && (
         <div style={{ marginTop: "var(--space-8)", display: "flex", flexDirection: "column", gap: "var(--space-3)", maxWidth: "480px" }}>
-          {statusFilteredCards.length === 0 && <p style={{ color: "var(--color-text-muted)" }}>No lost enquiries.</p>}
-          {statusFilteredCards.map(({ enquiry, brand }) => (
-            <Link key={enquiry.id} href={`/app/enquiries/${enquiry.id}`} style={{ display: "block", padding: "var(--space-4)", background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-lg)", color: "var(--color-text-primary)", textDecoration: "none" }}>
-              <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.1rem" }}>{brand}</div>
+          {ownerFilteredCards.length === 0 && (
+            <p style={{ color: "var(--color-text-muted)" }}>No lost enquiries.</p>
+          )}
+          {ownerFilteredCards.map(({ enquiry, brief }) => (
+            <Link
+              key={enquiry.id}
+              href={`/app/enquiries/${enquiry.id}`}
+              className="pv-lost-row"
+              style={{
+                display: "block",
+                padding: "var(--space-4)",
+                background: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-lg)",
+                color: "var(--color-text-primary)",
+                textDecoration: "none",
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>{brief?.event_type ?? "Untitled enquiry"}</div>
               {enquiry.lost_reason && (
-                <div style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)", marginTop: "var(--space-1)" }}>{enquiry.lost_reason}</div>
+                <div style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)", marginTop: "var(--space-1)" }}>
+                  {enquiry.lost_reason}
+                </div>
               )}
             </Link>
           ))}
         </div>
       )}
 
-      {/* Kanban */}
       {cards !== null && statusFilter !== "lost" && (
-        <div style={{ display: "flex", gap: "var(--space-5)", marginTop: "var(--space-8)", overflowX: "auto", paddingBottom: "var(--space-4)" }}>
-          {ENQUIRY_STAGES.map((stage) => {
-            const stageCards = activeCards.filter((c) => c.enquiry.stage === stage);
-            const stageValue = stageCards.reduce((sum, c) => sum + (c.brief?.budget_amount ?? 0), 0);
+        <div
+          className="pv-board"
+          style={{
+            display: "flex",
+            gap: "var(--space-6)",
+            marginTop: "var(--space-8)",
+            overflowX: "auto",
+            paddingBottom: "var(--space-5)",
+            alignItems: "flex-start",
+          }}
+        >
+          {columns.map((stage) => {
+            const rawStageCards = activeCards.filter((c) => c.enquiry.stage === stage);
+            const stageCards = sortStageCards(rawStageCards, sortBy);
+            const stageValue = rawStageCards.reduce((sum, c) => sum + (c.brief?.budget_amount ?? 0), 0);
+            const accent = STAGE_ACCENT[stage];
+            const isValidTarget = draggingId
+              ? ALLOWED_TRANSITIONS[cards?.find((c) => c.enquiry.id === draggingId)?.enquiry.stage ?? "enquiry"].includes(stage)
+              : false;
+            const isHoverTarget = dropTarget === stage;
             return (
-              <div key={stage} style={{ minWidth: "280px", flex: "0 0 280px" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderTop: `3px solid ${STAGE_ACCENT[stage]}`, paddingTop: "var(--space-3)" }}>
-                  <span style={{ fontSize: "0.7rem", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, color: "var(--color-text-secondary)" }}>
-                    {STAGE_LABEL[stage]}
+              <div
+                key={stage}
+                onDragOver={(e) => {
+                  if (!draggingId || !isValidTarget) return;
+                  e.preventDefault();
+                  setDropTarget(stage);
+                }}
+                onDragLeave={() => setDropTarget((t) => (t === stage ? null : t))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleDrop(stage);
+                }}
+                style={{
+                  minWidth: "292px",
+                  flex: "0 0 292px",
+                  borderRadius: "var(--radius-lg)",
+                  outline: isHoverTarget ? `2px dashed ${accent}` : "2px dashed transparent",
+                  outlineOffset: "6px",
+                  transition: "outline-color var(--transition-fast)",
+                  opacity: draggingId && !isValidTarget ? 0.55 : 1,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    paddingBottom: "var(--space-3)",
+                    borderBottom: `2px solid ${accent}`,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                    <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: accent, display: "inline-block" }} />
+                    <h2
+                      style={{
+                        fontSize: "0.78rem",
+                        margin: 0,
+                        color: "var(--color-text-primary)",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.1em",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {STAGE_LABEL[stage]}
+                    </h2>
+                  </div>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minWidth: "22px",
+                      height: "22px",
+                      padding: "0 6px",
+                      borderRadius: "var(--radius-pill)",
+                      background: "var(--color-surface)",
+                      fontSize: "0.72rem",
+                      fontWeight: 600,
+                      color: "var(--color-text-secondary)",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {stageCards.length}
                   </span>
-                  <span style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", color: "var(--color-text-muted)" }}>{stageCards.length}</span>
                 </div>
-                <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "var(--space-1) 0 var(--space-4)" }}>
-                  {fmtMoney(stageValue)} · {STAGE_SUBTITLE[stage]}
+                <p
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "var(--color-text-muted)",
+                    margin: "var(--space-2) 0 var(--space-4)",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  HKD {stageValue.toLocaleString()}
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-                  {stageCards.map(({ enquiry, brief, brand, owner }) => {
-                    const days = daysSince(enquiry.updated_at);
-                    const idle = days >= 2;
+                  {stageCards.map(({ enquiry, brief }) => {
+                    const daysInStage = daysSince(enquiry.updated_at);
+                    const isStalled = daysInStage >= STALL_THRESHOLD_DAYS;
+                    const daysToEvent = brief?.date_window_start ? daysUntil(brief.date_window_start) : null;
+                    const eventSoon =
+                      daysToEvent !== null && daysToEvent <= EVENT_SOON_DAYS && stage !== "held" && stage !== "signed";
+                    const isTransitioning = transitioningId === enquiry.id;
                     return (
-                      <Link
+                      <div
                         key={enquiry.id}
-                        href={`/app/enquiries/${enquiry.id}`}
+                        role="link"
+                        tabIndex={0}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", enquiry.id);
+                          e.dataTransfer.effectAllowed = "move";
+                          suppressClickRef.current = true;
+                          setDraggingId(enquiry.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggingId(null);
+                          setDropTarget(null);
+                        }}
+                        onClick={() => {
+                          if (suppressClickRef.current) {
+                            suppressClickRef.current = false;
+                            return;
+                          }
+                          router.push(`/app/enquiries/${enquiry.id}`);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            router.push(`/app/enquiries/${enquiry.id}`);
+                          }
+                        }}
+                        className="pv-card"
                         style={{
                           display: "block",
                           padding: "var(--space-4)",
                           background: "var(--color-bg)",
-                          borderLeft: `3px solid ${STAGE_ACCENT[enquiry.stage]}`,
-                          border: "1px solid var(--color-border)",
-                          borderRadius: "var(--radius-md)",
+                          border: `1px solid ${isStalled ? "var(--color-warning)" : "var(--color-border)"}`,
+                          borderTop: `3px solid ${accent}`,
+                          borderRadius: "var(--radius-lg)",
                           color: "var(--color-text-primary)",
                           textDecoration: "none",
+                          cursor: isTransitioning ? "wait" : "grab",
+                          opacity: isTransitioning ? 0.5 : 1,
+                          pointerEvents: isTransitioning ? "none" : "auto",
                         }}
                       >
-                        <span
-                          style={{
-                            display: "inline-block",
-                            padding: "2px 7px",
-                            borderRadius: "2px",
-                            fontSize: "0.58rem",
-                            fontWeight: 700,
-                            letterSpacing: "0.08em",
-                            textTransform: "uppercase",
-                            background: idle ? "var(--color-accent)" : "var(--color-brass)",
-                            color: "#fff",
-                          }}
-                        >
-                          {days === 0 ? "Today" : `${days} day${days === 1 ? "" : "s"}${idle ? " idle" : ""}`}
-                        </span>
-
-                        <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.2rem", marginTop: "var(--space-2)" }}>{brand}</div>
-                        <div style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)", marginTop: "2px" }}>
-                          {brief?.event_type ?? "—"}
-                          {brief?.guest_count ? ` · ${brief.guest_count} pax` : ""}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "var(--space-2)" }}>
+                          <div style={{ fontWeight: 600, fontSize: "0.95rem", lineHeight: 1.3 }}>
+                            {brief?.event_type ?? "Untitled enquiry"}
+                          </div>
+                          <span
+                            title={enquiry.forwarded_to ?? "Unassigned"}
+                            style={{
+                              width: "26px",
+                              height: "26px",
+                              borderRadius: "50%",
+                              background: enquiry.forwarded_to
+                                ? OWNER_COLOR[enquiry.forwarded_to] ?? "var(--color-text-muted)"
+                                : "var(--color-surface)",
+                              border: enquiry.forwarded_to ? "none" : "1px dashed var(--color-border)",
+                              color: "#fff",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: "0.7rem",
+                              fontWeight: 700,
+                              flexShrink: 0,
+                              boxShadow: "0 0 0 2px var(--color-bg)",
+                            }}
+                          >
+                            {enquiry.forwarded_to ? initialsFromName(enquiry.forwarded_to) : ""}
+                          </span>
                         </div>
 
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "var(--space-3)" }}>
-                          <span style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
-                            {brief?.budget_amount ? fmtMoney(brief.budget_amount) : "—"}
+                        {/* Reassign inline — a real select, not just a
+                            display badge, so the board doubles as a
+                            management surface and not just a viewer.
+                            stopPropagation on both events: pointerdown so
+                            opening/using the dropdown never starts a card
+                            drag, click so picking an option never
+                            navigates into the enquiry. */}
+                        <select
+                          value={enquiry.forwarded_to ?? ""}
+                          draggable={false}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            reassign(enquiry.id, e.target.value || null);
+                          }}
+                          style={{
+                            marginTop: "2px",
+                            fontSize: "0.75rem",
+                            color: "var(--color-text-secondary)",
+                            background: "transparent",
+                            border: "none",
+                            padding: 0,
+                            cursor: "pointer",
+                            maxWidth: "100%",
+                          }}
+                        >
+                          <option value="">Unassigned</option>
+                          {TEAM.map((member) => (
+                            <option key={member.name} value={member.name}>
+                              {member.name}
+                            </option>
+                          ))}
+                        </select>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-3)", flexWrap: "wrap" }}>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              padding: "2px var(--space-2)",
+                              borderRadius: "var(--radius-pill)",
+                              background: "var(--color-surface)",
+                              fontSize: "0.72rem",
+                              fontWeight: 500,
+                              color: "var(--color-text-secondary)",
+                              textTransform: "capitalize",
+                            }}
+                          >
+                            {enquiry.channel}
                           </span>
-                          {owner && (
-                            <span style={{ fontSize: "0.62rem", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, color: avatarColorForId(owner) }}>
-                              {owner.split(" ")[0]}
+                          {isStalled && (
+                            <span
+                              title={`No stage movement in ${daysInStage} days`}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                padding: "2px var(--space-2)",
+                                borderRadius: "var(--radius-pill)",
+                                background: "var(--color-warning)",
+                                fontSize: "0.68rem",
+                                fontWeight: 600,
+                                color: "#fff",
+                              }}
+                            >
+                              <WarningIcon />
+                              Stalled
+                            </span>
+                          )}
+                          {eventSoon && (
+                            <span
+                              title="Event date is approaching and this enquiry isn't confirmed yet"
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                padding: "2px var(--space-2)",
+                                borderRadius: "var(--radius-pill)",
+                                background: "var(--color-danger)",
+                                fontSize: "0.68rem",
+                                fontWeight: 600,
+                                color: "#fff",
+                              }}
+                            >
+                              <WarningIcon />
+                              {daysToEvent !== null && daysToEvent < 0
+                                ? "Event passed"
+                                : `Event in ${daysToEvent}d`}
                             </span>
                           )}
                         </div>
-                      </Link>
+
+                        <div style={{ display: "flex", gap: "var(--space-4)", marginTop: "var(--space-3)", fontSize: "0.8rem", color: "var(--color-text-secondary)" }}>
+                          {brief?.guest_count && (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                              <GuestIcon />
+                              {brief.guest_count}
+                            </span>
+                          )}
+                          {brief?.date_window_start && (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                              <CalendarIcon />
+                              {brief.date_window_start}
+                              {brief.date_window_end && brief.date_window_end !== brief.date_window_start
+                                ? ` – ${brief.date_window_end}`
+                                : ""}
+                            </span>
+                          )}
+                        </div>
+
+                        {brief?.budget_amount && (
+                          <div style={{ marginTop: "var(--space-3)", fontWeight: 700, fontSize: "0.95rem", fontVariantNumeric: "tabular-nums", color: "var(--color-text-primary)" }}>
+                            HKD {brief.budget_amount.toLocaleString()}
+                            {brief.budget_basis === "per_head" ? (
+                              <span style={{ fontWeight: 400, color: "var(--color-text-secondary)", fontSize: "0.78rem" }}> / head</span>
+                            ) : (
+                              ""
+                            )}
+                          </div>
+                        )}
+
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "5px",
+                            fontSize: "0.72rem",
+                            color: isStalled ? "var(--color-warning)" : "var(--color-text-muted)",
+                            fontWeight: isStalled ? 600 : 400,
+                            marginTop: "var(--space-3)",
+                            paddingTop: "var(--space-2)",
+                            borderTop: "1px solid var(--color-border)",
+                          }}
+                        >
+                          <ClockIcon />
+                          {daysInStage} day{daysInStage === 1 ? "" : "s"} in stage
+                        </div>
+                      </div>
                     );
                   })}
-                  {stageCards.length === 0 && <p style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>—</p>}
+                  {stageCards.length === 0 && (
+                    <div
+                      style={{
+                        border: "1px dashed var(--color-border)",
+                        borderRadius: "var(--radius-lg)",
+                        padding: "var(--space-4)",
+                        textAlign: "center",
+                        fontSize: "0.78rem",
+                        color: "var(--color-text-muted)",
+                      }}
+                    >
+                      No enquiries here yet
+                    </div>
+                  )}
                 </div>
               </div>
             );

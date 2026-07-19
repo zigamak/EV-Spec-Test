@@ -1,4 +1,10 @@
 export type VenueStatus = "draft" | "pending_approval" | "active" | "inactive";
+export type VenueCategory =
+  | "event_space"
+  | "private_property"
+  | "commercial_space"
+  | "boats_yachts"
+  | "member_club";
 export type MediaKind = "photo" | "video" | "floor_plan";
 export type RestrictionKind =
   | "no_amplified_music"
@@ -16,9 +22,16 @@ export interface Venue {
   description: string | null;
   address: string | null;
   district: string | null;
+  category: VenueCategory | null;
+  amenities: string[];
+  ideal_for: string[];
+  accepted_event_types: string[];
+  surface_area_sqft: number | null;
+  room_count: number | null;
+  access_note: string | null;
+  view_note: string | null;
   landlord_id: string | null;
   status: VenueStatus;
-  amenities: string[];
   approved_by: string | null;
   approved_at: string | null;
   hero_media_id: string | null;
@@ -58,6 +71,14 @@ export interface VenueCreate {
   description?: string | null;
   address?: string | null;
   district?: string | null;
+  category?: VenueCategory | null;
+  amenities?: string[];
+  ideal_for?: string[];
+  accepted_event_types?: string[];
+  surface_area_sqft?: number | null;
+  room_count?: number | null;
+  access_note?: string | null;
+  view_note?: string | null;
   status?: VenueStatus;
 }
 
@@ -67,8 +88,50 @@ export interface VenueUpdate {
   description?: string | null;
   address?: string | null;
   district?: string | null;
+  category?: VenueCategory | null;
+  amenities?: string[];
+  ideal_for?: string[];
+  accepted_event_types?: string[];
+  surface_area_sqft?: number | null;
+  room_count?: number | null;
+  access_note?: string | null;
+  view_note?: string | null;
   status?: VenueStatus;
 }
+
+export const VENUE_CATEGORY_LABEL: Record<VenueCategory, string> = {
+  event_space: "Event space",
+  private_property: "Private property",
+  commercial_space: "Commercial space",
+  boats_yachts: "Boats & yachts",
+  member_club: "Member club",
+};
+
+export const VENUE_CATEGORIES: VenueCategory[] = [
+  "event_space",
+  "private_property",
+  "commercial_space",
+  "boats_yachts",
+  "member_club",
+];
+
+// Curated starting chips (operators can add custom tags freely too) — a
+// venue-agnostic default set covering the amenities that recur across the
+// existing demo portfolio (AV, outdoor space, harbour views, accessibility).
+export const SUGGESTED_VENUE_AMENITIES: string[] = [
+  "AV equipment",
+  "Sound system",
+  "Dance floor",
+  "Outdoor space",
+  "Rooftop",
+  "Harbour view",
+  "Natural light",
+  "Private entrance",
+  "Catering kitchen",
+  "Bridal suite",
+  "Parking",
+  "Wheelchair accessible",
+];
 
 export interface VenueConfigurationCreate {
   name: string;
@@ -124,6 +187,102 @@ export interface VenueWithPortfolio extends Venue {
   venue_configurations: VenueConfiguration[];
 }
 
+export interface VenueActivation {
+  id: string;
+  venue_id: string;
+  client_name: string;
+  client_category: string | null;
+  event_type: string | null;
+  event_date: string | null;
+  sort_order: number;
+}
+
+export interface VenueActivationCreate {
+  client_name: string;
+  client_category?: string | null;
+  event_type?: string | null;
+  event_date?: string | null;
+  sort_order?: number;
+}
+
+export type FilmStatus = "planned" | "in_production" | "delivered";
+
+export const FILM_STATUS_LABEL: Record<FilmStatus, string> = {
+  planned: "Planned",
+  in_production: "In production",
+  delivered: "Delivered",
+};
+
+export interface VenueFilm {
+  id: string;
+  venue_id: string;
+  title: string;
+  duration_label: string | null;
+  status: FilmStatus;
+  video_media_id: string | null;
+  video_url: string | null;
+  sort_order: number;
+}
+
+export interface VenueFilmCreate {
+  title: string;
+  duration_label?: string | null;
+  status?: FilmStatus;
+  video_media_id?: string | null;
+  sort_order?: number;
+}
+
+export interface VenueTeamContact {
+  id: string;
+  venue_id: string;
+  name: string;
+  role: string;
+  phone: string | null;
+  email: string | null;
+  sort_order: number;
+}
+
+export interface VenueTeamContactCreate {
+  name: string;
+  role: string;
+  phone?: string | null;
+  email?: string | null;
+  sort_order?: number;
+}
+
+export interface VenueWithProfile extends Venue {
+  venue_media: VenueMedia[];
+  venue_configurations: VenueConfiguration[];
+  venue_activations: VenueActivation[];
+  venue_films: VenueFilm[];
+  venue_team_contacts: VenueTeamContact[];
+}
+
+// Curated starting chips, same spirit as SUGGESTED_VENUE_AMENITIES —
+// suggestions only, operators can add anything.
+export const SUGGESTED_IDEAL_FOR: string[] = [
+  "1-on-1 appointment",
+  "Private dinner",
+  "Cocktail party",
+  "Product launch",
+  "Photoshoot",
+  "Filming & shooting",
+  "Wedding",
+  "VIP reception",
+];
+
+export const SUGGESTED_ACCEPTED_EVENT_TYPES: string[] = [
+  "1-on-1 appointment",
+  "Cocktail party",
+  "Filming & shooting",
+  "Photoshoot",
+  "Private function / celebration",
+  "Product launch",
+  "Sit-down dinner",
+  "Staycation",
+  "Tradeshow",
+];
+
 // --- Enquiry intake (C1) ---------------------------------------------
 
 export type OrganisationKind = "corporate" | "agency" | "brand" | "production_house" | "other";
@@ -135,6 +294,32 @@ export type OrganisationTier = "tier-1" | "tier-2" | "standard";
 // channel-agnostic, so every intake channel needs to be a real value here
 // rather than falling back to 'manual' or 'other'.
 export type ContactSource = "email" | "web_form" | "concierge" | "manual" | "whatsapp";
+
+export const ORGANISATION_KINDS: OrganisationKind[] = ["brand", "corporate", "agency", "production_house", "other"];
+
+export const ORGANISATION_KIND_LABEL: Record<OrganisationKind, string> = {
+  brand: "Brand",
+  corporate: "Corporate",
+  agency: "Agency",
+  production_house: "Production house",
+  other: "Other",
+};
+
+export const ORGANISATION_TIERS: OrganisationTier[] = ["tier-1", "tier-2", "standard"];
+
+export const ORGANISATION_TIER_LABEL: Record<OrganisationTier, string> = {
+  "tier-1": "Tier 1",
+  "tier-2": "Tier 2",
+  standard: "Standard",
+};
+
+export const CONTACT_SOURCE_LABEL: Record<ContactSource, string> = {
+  email: "Email",
+  web_form: "Web form",
+  concierge: "Concierge",
+  manual: "Manual",
+  whatsapp: "WhatsApp",
+};
 export type EnquiryChannel = "email" | "web_form" | "manual" | "concierge" | "whatsapp";
 // Revamped 18 Jul (task H3) — 5-stage Kanban (Enquiry -> Briefed ->
 // Proposed -> Held -> Signed) matching the full Inquiries -> Proposal ->
@@ -196,6 +381,17 @@ export interface Organisation {
   rate_card_on_file: boolean;
   rate_card_terms: string | null;
   region: string | null;
+  // Contacts-directory fields (19 Jul, migration 0018).
+  website: string | null;
+  address: string | null;
+  notes: string | null;
+  // Brand-level contact channel (migration 0019) — distinct from any one
+  // contact's own email/phone.
+  email: string | null;
+  phone: string | null;
+  parent_company: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface OrganisationCreate {
@@ -205,6 +401,27 @@ export interface OrganisationCreate {
   rate_card_on_file?: boolean;
   rate_card_terms?: string | null;
   region?: string | null;
+  website?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  parent_company?: string | null;
+}
+
+export interface OrganisationUpdate {
+  name?: string;
+  kind?: OrganisationKind;
+  tier?: OrganisationTier | null;
+  rate_card_on_file?: boolean;
+  rate_card_terms?: string | null;
+  region?: string | null;
+  website?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  parent_company?: string | null;
 }
 
 export interface Contact {
@@ -212,6 +429,7 @@ export interface Contact {
   full_name: string;
   email: string | null;
   phone: string | null;
+  role: string | null;
   organisation_id: string | null;
   source: ContactSource;
   created_at: string;
@@ -221,8 +439,71 @@ export interface ContactCreate {
   full_name: string;
   email?: string | null;
   phone?: string | null;
+  role?: string | null;
   organisation_id?: string | null;
   source: ContactSource;
+}
+
+export interface ContactUpdate {
+  full_name?: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: string | null;
+  organisation_id?: string | null;
+}
+
+export interface DealStats {
+  enquiry_count: number;
+  signed_count: number;
+  total_revenue: number;
+  currency: string | null;
+  last_contact_at: string | null;
+  proposal_count: number;
+  open_proposal_count: number;
+  win_rate: number | null;
+}
+
+export interface OrganisationSummary {
+  organisation: Organisation;
+  contacts: Contact[];
+  stats: DealStats;
+  auto_imported: boolean;
+}
+
+export interface ContactSummary {
+  contact: Contact;
+  organisation: Organisation | null;
+  stats: DealStats;
+}
+
+export type TimelineType =
+  | "onboarded"
+  | "enquiry_received"
+  | "brief_parsed"
+  | "proposal_sent"
+  | "proposal_won"
+  | "proposal_declined"
+  | "activity";
+
+export type TimelineCategory = "system" | "email" | "proposal" | "event";
+
+export interface TimelineEntry {
+  id: string;
+  type: TimelineType;
+  category: TimelineCategory;
+  timestamp: string;
+  label: string;
+  title: string;
+  contact_name: string | null;
+  contact_email: string | null;
+  body: string | null;
+  fields: Record<string, string> | null;
+  venues: string[] | null;
+  price_low: number | null;
+  price_high: number | null;
+  currency: string | null;
+  enquiry_id: string | null;
+  proposal_id: string | null;
 }
 
 export interface Enquiry {
