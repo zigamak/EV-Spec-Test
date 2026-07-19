@@ -44,6 +44,10 @@ const STAGE_ACCENT: Record<EnquiryStage, string> = {
 // deterministic authority, this is just so a bad drop doesn't even look
 // droppable), so this list drifting stale would fail safe as a rejected
 // drop with a clear error, never a silent bad write.
+// Owner-filter sentinel for enquiries with no forwarded_to (owner) yet — the
+// intake/triage pool. Distinct from WHOLE_TEAM (everyone) and any real name.
+const UNASSIGNED = "__unassigned__";
+
 const ALLOWED_TRANSITIONS: Record<EnquiryStage, EnquiryStage[]> = {
   enquiry: ["briefed", "lost"],
   briefed: ["proposed", "lost"],
@@ -324,18 +328,17 @@ export default function PipelineBoardPage() {
   const ownerCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const c of statusFilteredCards) {
-      if (c.enquiry.forwarded_to) counts[c.enquiry.forwarded_to] = (counts[c.enquiry.forwarded_to] ?? 0) + 1;
+      const key = c.enquiry.forwarded_to || UNASSIGNED;
+      counts[key] = (counts[key] ?? 0) + 1;
     }
     return counts;
   }, [statusFilteredCards]);
 
-  const ownerFilteredCards = useMemo(
-    () =>
-      ownerFilter === WHOLE_TEAM
-        ? statusFilteredCards
-        : statusFilteredCards.filter((c) => c.enquiry.forwarded_to === ownerFilter),
-    [statusFilteredCards, ownerFilter],
-  );
+  const ownerFilteredCards = useMemo(() => {
+    if (ownerFilter === WHOLE_TEAM) return statusFilteredCards;
+    if (ownerFilter === UNASSIGNED) return statusFilteredCards.filter((c) => !c.enquiry.forwarded_to);
+    return statusFilteredCards.filter((c) => c.enquiry.forwarded_to === ownerFilter);
+  }, [statusFilteredCards, ownerFilter]);
 
   const activeCards = useMemo(
     () => ownerFilteredCards.filter((c) => c.enquiry.stage !== "lost"),
@@ -508,6 +511,27 @@ export default function PipelineBoardPage() {
             <span style={{ color: "var(--color-text-primary)", fontWeight: ownerFilter === WHOLE_TEAM ? 700 : 500 }}>
               {WHOLE_TEAM}
             </span>
+          </button>
+          <button
+            onClick={() => setOwnerFilter((current) => (current === UNASSIGNED ? WHOLE_TEAM : UNASSIGNED))}
+            className="pv-pill"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              padding: "var(--space-1) var(--space-3)",
+              borderRadius: "var(--radius-pill)",
+              border: ownerFilter === UNASSIGNED ? "1px solid var(--color-accent)" : "1px dashed var(--color-border)",
+              background: ownerFilter === UNASSIGNED ? "var(--color-surface)" : "var(--color-bg)",
+              fontSize: "0.8rem",
+              boxShadow: ownerFilter === UNASSIGNED ? "var(--shadow-sm)" : "none",
+            }}
+            title="Enquiries with no owner yet — the intake pool"
+          >
+            <span style={{ color: "var(--color-text-secondary)", fontWeight: ownerFilter === UNASSIGNED ? 700 : 500 }}>
+              Unassigned
+            </span>
+            <span style={{ color: "var(--color-text-muted)" }}>{ownerCounts[UNASSIGNED] ?? 0}</span>
           </button>
           {TEAM.map((member) => {
             const active = ownerFilter === member.name;

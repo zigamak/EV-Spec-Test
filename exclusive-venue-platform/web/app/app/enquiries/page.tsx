@@ -122,6 +122,7 @@ export default function InquiriesInboxPage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<StatusTab>("open");
+  const [assign, setAssign] = useState<"all" | "unassigned" | "assigned">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -162,9 +163,14 @@ export default function InquiriesInboxPage() {
   }, [rows]);
 
   const visible = useMemo(() => {
-    const list = (rows ?? []).filter((r) => tab === "all" || r.enquiry.status === tab);
+    const list = (rows ?? []).filter((r) => {
+      if (tab !== "all" && r.enquiry.status !== tab) return false;
+      if (assign === "unassigned" && r.enquiry.forwarded_to) return false;
+      if (assign === "assigned" && !r.enquiry.forwarded_to) return false;
+      return true;
+    });
     return list.sort((a, b) => (a.enquiry.updated_at < b.enquiry.updated_at ? 1 : -1));
-  }, [rows, tab]);
+  }, [rows, tab, assign]);
 
   const selected = useMemo(
     () => visible.find((r) => r.enquiry.id === selectedId) ?? visible[0] ?? null,
@@ -223,6 +229,34 @@ export default function InquiriesInboxPage() {
                   <span style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontSize: "0.9rem" }}>
                     {counts[t.key]}
                   </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+            {(["all", "unassigned", "assigned"] as const).map((a) => {
+              const active = assign === a;
+              return (
+                <button
+                  key={a}
+                  onClick={() => setAssign(a)}
+                  style={{
+                    padding: "2px var(--space-3)",
+                    borderRadius: "var(--radius-pill)",
+                    border: active
+                      ? `1px solid ${a === "unassigned" ? "var(--color-accent)" : "var(--color-navy)"}`
+                      : "1px solid var(--color-border)",
+                    background: active ? "var(--color-surface)" : "var(--color-bg)",
+                    cursor: "pointer",
+                    fontSize: "0.68rem",
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    fontWeight: active ? 700 : 500,
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  {a}
                 </button>
               );
             })}
