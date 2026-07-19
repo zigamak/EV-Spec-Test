@@ -18,6 +18,7 @@ export interface Venue {
   district: string | null;
   landlord_id: string | null;
   status: VenueStatus;
+  amenities: string[];
   approved_by: string | null;
   approved_at: string | null;
   hero_media_id: string | null;
@@ -301,6 +302,8 @@ export interface Brief {
   budget_estimate_low: number | null;
   budget_estimate_high: number | null;
   location_preference: string | null;
+  catering: string | null;
+  decision_by: string | null;
   requirements: BriefRequirements;
   confidence: number;
   flagged_fields: string[];
@@ -327,6 +330,8 @@ export interface BriefUpdate {
   budget_estimate_low?: number | null;
   budget_estimate_high?: number | null;
   location_preference?: string | null;
+  catering?: string | null;
+  decision_by?: string | null;
   requirements?: BriefRequirements;
   flagged_fields?: string[];
   fields_to_confirm?: string[];

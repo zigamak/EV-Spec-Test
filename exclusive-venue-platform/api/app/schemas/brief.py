@@ -62,6 +62,8 @@ class ParsedBrief(BaseModel):
     budget_estimate_low: float | None = Field(default=None, ge=0)
     budget_estimate_high: float | None = Field(default=None, ge=0)
     location_preference: str | None = None
+    catering: str | None = None
+    decision_by: date | None = None
     requirements: dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(ge=0, le=1)
     flagged_fields: list[str] = Field(default_factory=list)
@@ -103,6 +105,8 @@ class BriefUpdate(BaseModel):
     budget_estimate_low: float | None = Field(default=None, ge=0)
     budget_estimate_high: float | None = Field(default=None, ge=0)
     location_preference: str | None = None
+    catering: str | None = None
+    decision_by: date | None = None
     requirements: dict[str, Any] | None = None
     flagged_fields: list[str] | None = None
     fields_to_confirm: list[str] | None = None
@@ -127,6 +131,8 @@ class Brief(BaseModel):
     budget_estimate_low: float | None
     budget_estimate_high: float | None
     location_preference: str | None
+    catering: str | None
+    decision_by: date | None
     requirements: dict[str, Any]
     confidence: float
     flagged_fields: list[str]

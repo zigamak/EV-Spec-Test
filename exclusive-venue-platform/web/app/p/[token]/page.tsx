@@ -37,6 +37,9 @@ export default function PublicProposalPage() {
   }, [token]);
 
   const money = (n: number, ccy: string) => `${ccy} ${Number(n).toLocaleString()}`;
+  // EVA Service Fee — matches the proposal document + Step 3 pricing.
+  const SERVICE_FEE_PCT = 12;
+  const feeOf = (n: number) => Math.round(n * (SERVICE_FEE_PCT / 100));
 
   if (error) {
     return (
@@ -95,8 +98,13 @@ export default function PublicProposalPage() {
                   <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.5rem", marginTop: "2px" }}>{v.venue_name}</div>
                   <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>{v.configuration_name}</div>
                 </div>
-                <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.4rem", fontWeight: 600 }}>
-                  {money(v.quote_total, proposal.currency)}
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.4rem", fontWeight: 600 }}>
+                    {money(v.quote_total + feeOf(v.quote_total), proposal.currency)}
+                  </div>
+                  <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>
+                    {money(v.quote_total, proposal.currency)} + {SERVICE_FEE_PCT}% service fee
+                  </div>
                 </div>
               </div>
               {v.venue_copy && (

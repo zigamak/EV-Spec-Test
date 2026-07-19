@@ -111,6 +111,32 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   return response.json() as Promise<T>;
 }
 
+/** Authenticated text fetch (e.g. the proposal preview HTML) — same auth +
+ * refresh + 401-redirect as apiFetch, but returns the raw response body. */
+export async function apiFetchText(path: string): Promise<string> {
+  const supabase = createClient();
+  let {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (session?.expires_at && session.expires_at * 1000 < Date.now() + 60_000) {
+    const { data } = await supabase.auth.refreshSession();
+    session = data.session ?? session;
+  }
+  if (!session) {
+    redirectToLogin();
+    throw new ApiError(401, "Not signed in");
+  }
+  const response = await fetchWithTimeout(`${API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  if (response.status === 401) {
+    redirectToLogin();
+    throw new ApiError(401, "Session expired — please sign in again.");
+  }
+  if (!response.ok) throw new ApiError(response.status, "Request failed");
+  return response.text();
+}
+
 /** Authenticated file download (e.g. a server-rendered PDF): fetches the
  * bytes with the session token, then triggers a browser download. */
 export async function apiDownload(path: string, filename: string): Promise<void> {

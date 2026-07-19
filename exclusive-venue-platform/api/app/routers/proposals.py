@@ -5,7 +5,7 @@ lives in routers/public_proposals.py, not here (anon has no RLS policy on
 these tables at all).
 """
 
-from datetime import UTC
+from datetime import UTC, date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -282,47 +282,117 @@ def generate_proposal_personal_email(proposal_id: UUID, client: ScopedClient, _:
     return result.data[0]
 
 
+SERVICE_FEE_PCT = 12  # EVA Service Fee — must match app/services/proposal_pdf.py.
+_OWNER_ROLES = {
+    "Crystal Lam": "Account Director",
+    "Henry Wong": "Senior Account Manager",
+    "Sammi Chiu": "GM",
+    "Saoud Maherzi": "Chairman",
+}
+_COUNT_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+
+
+def _as_date(value) -> date | None:
+    if not value:
+        return None
+    return value if isinstance(value, date) else datetime.fromisoformat(str(value)).date()
+
+
+def _fmt_date(value, weekday: bool = False) -> str | None:
+    d = _as_date(value)
+    if d is None:
+        return None
+    return f"{d.strftime('%a ') if weekday else ''}{d.day} {d.strftime('%b %Y')}".strip()
+
+
 def _proposal_context(client: Client, proposal: dict) -> dict:
-    """Gather everything the PDF/preview needs: client, brief meta, and each
-    proposal venue with its photos (signed) + priced breakdown."""
+    """Gather everything the detailed proposal document needs (task G4):
+    client/contact/owner, the full brief, and each venue with photos (signed),
+    amenities, config capacity, pricing-rule hours, and the priced breakdown
+    incl. the EVA service fee. Consumed by render_proposal_html."""
     brief = client.table("briefs").select("*").eq("id", proposal["brief_id"]).execute().data[0]
 
-    client_name = "Client"
+    contact_name = None
+    org_name = None
+    region = None
+    owner = None
+    captured = None
     enquiry = client.table("enquiries").select("*").eq("id", proposal["enquiry_id"]).execute().data
-    if enquiry and enquiry[0].get("contact_id"):
-        contact = (
-            client.table("contacts").select("*").eq("id", enquiry[0]["contact_id"]).execute().data
-        )
-        if contact:
-            client_name = contact[0]["full_name"]
-            if contact[0].get("organisation_id"):
-                org = (
-                    client.table("organisations")
-                    .select("name")
-                    .eq("id", contact[0]["organisation_id"])
-                    .execute()
-                    .data
-                )
-                if org:
-                    client_name = org[0]["name"]
+    if enquiry:
+        owner = enquiry[0].get("forwarded_to")
+        captured = enquiry[0].get("created_at")
+        if enquiry[0].get("contact_id"):
+            contact = (
+                client.table("contacts").select("*").eq("id", enquiry[0]["contact_id"]).execute().data
+            )
+            if contact:
+                contact_name = contact[0]["full_name"]
+                if contact[0].get("organisation_id"):
+                    org = (
+                        client.table("organisations")
+                        .select("name, region")
+                        .eq("id", contact[0]["organisation_id"])
+                        .execute()
+                        .data
+                    )
+                    if org:
+                        org_name = org[0]["name"]
+                        region = org[0].get("region")
+
+    client_name = org_name or contact_name or "Client"
+    reqs = brief.get("requirements") or {}
+    format_needs = reqs.get("format_needs") or []
+    tech_needs = reqs.get("tech_needs") or []
+    mood = reqs.get("mood") or []
 
     start, end = brief.get("date_window_start"), brief.get("date_window_end")
-    window_str = start if not end or end == start else f"{start} – {end}"
+    window_str = _fmt_date(start) if not end or end == start else f"{_fmt_date(start)} – {_fmt_date(end)}"
+    tod = brief.get("time_of_day")
+    duration_label = " · ".join(
+        filter(None, [f"{brief['duration_hours']:g} hours" if brief.get("duration_hours") else None, tod])
+    )
 
     if brief.get("budget_amount"):
         basis = " / head" if brief.get("budget_basis") == "per_head" else ""
-        budget = f"HKD {float(brief['budget_amount']):,.0f}{basis}"
+        budget = f"HK$ {float(brief['budget_amount']):,.0f}{basis}"
+    elif brief.get("budget_status") == "tbc" and brief.get("budget_estimate_low"):
+        lo, hi = float(brief["budget_estimate_low"]), float(brief["budget_estimate_high"])
+        budget = f"TBC · est. HK$ {lo:,.0f}–{hi:,.0f}"
     elif brief.get("budget_status") == "tbc":
         budget = "TBC"
     else:
-        budget = "—"
+        budget = None
 
-    meta = [
-        ("Guests", f"{brief['guest_count']} pax" if brief.get("guest_count") else "—"),
-        ("Format", brief.get("event_type") or "—"),
-        ("Date", window_str or "—"),
-        ("Budget", budget),
-    ]
+    guests = brief.get("guest_count")
+    event_type = brief.get("event_type")
+    headline = (
+        f"{guests} guests, {brief['duration_hours']:g} hours, one impression"
+        if guests and brief.get("duration_hours")
+        else (event_type or "A considered proposal")
+    )
+
+    def _rows(pairs):
+        return [(k, v) for k, v in pairs if v]
+
+    brief_meta = _rows([
+        ("Format", event_type),
+        ("Guests", f"{guests} pax" if guests else None),
+        ("Date", window_str),
+        ("Duration", duration_label),
+        ("Format needs", " · ".join(format_needs)),
+        ("Mood", " · ".join(mood)),
+    ])
+    enquiry_rows = _rows([
+        ("Contact", contact_name),
+        ("Maison", org_name),
+        ("Project", event_type),
+        ("Window", " · ".join(filter(None, [window_str, tod]))),
+        ("Headcount", f"{guests} pax confirmed" if guests else None),
+        ("Catering", brief.get("catering")),
+        ("AV needs", " · ".join(tech_needs)),
+        ("Decision by", _fmt_date(brief.get("decision_by"))),
+        ("Budget signal", budget),
+    ])
 
     pvs = (
         client.table("proposal_venues")
@@ -333,8 +403,25 @@ def _proposal_context(client: Client, proposal: dict) -> dict:
         .data
     )
     venues = []
-    for pv in pvs:
+    for i, pv in enumerate(pvs, start=1):
         venue = client.table("venues").select("*").eq("id", pv["venue_id"]).execute().data[0]
+        config = (
+            client.table("venue_configurations")
+            .select("capacity, name")
+            .eq("id", pv["configuration_id"])
+            .execute()
+            .data
+        )
+        capacity = config[0]["capacity"] if config else None
+        rule = (
+            client.table("pricing_rules")
+            .select("duration_multipliers")
+            .eq("id", pv["pricing_rules_id"])
+            .execute()
+            .data
+        )
+        included_hours = (rule[0].get("duration_multipliers") or {}).get("included_hours") if rule else None
+
         media = (
             client.table("venue_media")
             .select("storage_path")
@@ -343,43 +430,73 @@ def _proposal_context(client: Client, proposal: dict) -> dict:
             .execute()
             .data
         )
-        paths = [m["storage_path"] for m in media]
-        url_map = storage.signed_urls(paths)
-        images = [url_map[p] for p in paths if p in url_map]
+        url_map = storage.signed_urls([m["storage_path"] for m in media])
+        image = next((url_map[m["storage_path"]] for m in media if m["storage_path"] in url_map), None)
+
+        subtotal = float(pv.get("quote_total") or 0)
+        fee = round(subtotal * SERVICE_FEE_PCT / 100)
+        total = subtotal + fee
+        hours = brief.get("duration_hours") or included_hours or 1
+        rate_per_hr = round(subtotal / hours) if hours else subtotal
 
         qb = pv.get("quote_breakdown") or {}
+        season_mult = qb.get("season_adjustment_multiplier") or 1
+        season_label = "Peak season" if season_mult and float(season_mult) > 1 else "Standard season"
 
-        def _fmt(n):
-            return f"HKD {float(n):,.0f}"
+        amenities = []
+        if capacity:
+            amenities.append(f"to {capacity} standing")
+        if included_hours:
+            amenities.append(f"{included_hours:g}hr access")
+        amenities += list(venue.get("amenities") or [])
 
-        rows = []
-        if qb.get("base_rate") is not None:
-            rows.append(("Venue rental", _fmt(qb["base_rate"])))
-        if qb.get("per_head_total"):
-            rows.append(("Per-head catering", _fmt(qb["per_head_total"])))
-        if qb.get("duration_overtime_amount"):
-            rows.append(("Overtime", _fmt(qb["duration_overtime_amount"])))
-        if qb.get("addons_total"):
-            rows.append(("Add-ons", _fmt(qb["addons_total"])))
-
-        venues.append(
-            {
-                "name": venue["name"],
-                "district": venue.get("district"),
-                "description": venue.get("description"),
-                "images": images,
-                "rows": rows,
-                "total": pv.get("quote_total"),
-            }
-        )
+        venues.append({
+            "index": i,
+            "name": venue["name"],
+            "location_line": venue.get("district") or "—",
+            "description": venue.get("description"),
+            "image": image,
+            "amenities": amenities,
+            "meta_line": " · ".join(
+                filter(
+                    None,
+                    [
+                        f"{guests} pax" if guests else None,
+                        f"{hours:g} hrs",
+                        _fmt_date(start, weekday=True),
+                        season_label,
+                    ],
+                )
+            ),
+            "rate_per_hr": rate_per_hr,
+            "hours": f"{hours:g}",
+            "hours_label": (
+                f"× {hours:g} hours · {'full-day access' if hours >= 10 else 'standard day access'}"
+            ),
+            "subtotal": subtotal,
+            "fee": fee,
+            "total": total,
+            "recommended": pv.get("recommended"),
+        })
 
     return {
         "proposal_ref": f"#{proposal['id'][:4].upper()}",
+        "version": proposal.get("version", 1),
+        "currency": proposal.get("currency", "HKD"),
         "client_name": client_name,
-        "event_title": brief.get("event_type") or "Event Proposal",
-        "window_str": window_str,
+        "contact_name": contact_name,
+        "owner_name": owner or "Your Exclusive Venue manager",
+        "owner_first": (owner or "Your manager").split()[0],
+        "owner_role": _OWNER_ROLES.get(owner, "Account manager"),
+        "region": region or "Hong Kong",
+        "event_title": event_type or "Event Proposal",
+        "headline": headline,
         "intro_copy": proposal.get("intro_copy"),
-        "meta": meta,
+        "captured_date": _fmt_date(captured),
+        "window_str": window_str,
+        "brief_meta": brief_meta,
+        "enquiry_rows": enquiry_rows,
+        "option_count_word": _COUNT_WORDS.get(len(venues), str(len(venues))),
         "venues": venues,
     }
 
@@ -388,17 +505,24 @@ def _proposal_context(client: Client, proposal: dict) -> dict:
 def proposal_pdf(proposal_id: UUID, client: ScopedClient, _: Staff):
     """Branded proposal as a downloadable PDF (task G4). Rendered server-side
     with Chromium (app/services/proposal_pdf.py) so it's true to the design —
-    the same document the operator previews, minus the app chrome."""
+    the same HTML the operator previews, minus the app chrome."""
     proposal = _get_proposal_or_404(client, proposal_id)
     context = _proposal_context(client, proposal)
-    html = render_proposal_html(**context)
-    pdf = proposal_pdf_bytes(html)
+    pdf = proposal_pdf_bytes(render_proposal_html(context))
     filename = f"Proposal_{context['proposal_ref'].lstrip('#')}.pdf"
     return Response(
         content=pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/proposals/{proposal_id}/preview-html")
+def proposal_preview_html(proposal_id: UUID, client: ScopedClient, _: Staff):
+    """The exact HTML the PDF is rendered from — shown in the builder's preview
+    iframe so preview and PDF are one source of truth (never drift)."""
+    proposal = _get_proposal_or_404(client, proposal_id)
+    return Response(content=render_proposal_html(_proposal_context(client, proposal)), media_type="text/html")
 
 
 # --- proposal_venues -----------------------------------------------------

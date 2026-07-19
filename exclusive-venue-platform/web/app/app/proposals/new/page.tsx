@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiDownload, apiFetch, ApiError } from "@/lib/api/client";
+import { apiDownload, apiFetch, apiFetchText, ApiError } from "@/lib/api/client";
 import type {
   Brief,
   Contact,
@@ -67,6 +67,11 @@ const TAG: React.CSSProperties = {
   textTransform: "uppercase",
   borderRadius: "2px",
 };
+
+// EVA Service Fee — kept in lockstep with api/app/services/proposal_pdf.py and
+// the proposal document. Every client-facing total is subtotal + this %.
+const SERVICE_FEE_PCT = 12;
+const withFee = (subtotal: number) => Math.round(subtotal * (1 + SERVICE_FEE_PCT / 100));
 
 function numberWord(n: number): string {
   return ["zero", "one", "two", "three", "four", "five"][n] ?? String(n);
@@ -134,6 +139,7 @@ export default function ProposalBuilderPage() {
   const [emailCopy, setEmailCopy] = useState("");
   const [generatingEmail, setGeneratingEmail] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
 
   // Guards against creating duplicate drafts. Set synchronously before any
   // await, so a second concurrent call (React StrictMode double-fires effects
@@ -432,6 +438,18 @@ export default function ProposalBuilderPage() {
     const su = encodeURIComponent(`Proposal — ${brief?.event_type ?? "your event"}`);
     const body = encodeURIComponent(emailCopy);
     window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${su}&body=${body}`, "_blank");
+  }
+
+  async function openPreview() {
+    if (!proposal) return;
+    setShowPreview(true);
+    setPreviewHtml(null);
+    try {
+      setPreviewHtml(await apiFetchText(`/proposals/${proposal.id}/preview-html`));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't render the preview.");
+      setShowPreview(false);
+    }
   }
 
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -899,7 +917,7 @@ export default function ProposalBuilderPage() {
                           {nameForVenue(pv.venue_id)}
                         </span>
                         <span style={{ fontWeight: 600 }}>
-                          HKD {pv.quote_total != null ? pv.quote_total.toLocaleString() : "—"}
+                          HKD {pv.quote_total != null ? withFee(pv.quote_total).toLocaleString() : "—"}
                         </span>
                       </div>
                     ))}
@@ -924,7 +942,10 @@ export default function ProposalBuilderPage() {
             {/* Generated banner */}
             {picked.length > 0 &&
               (() => {
-                const totals = picked.map((p) => p.quote_total).filter((t): t is number => t != null);
+                const totals = picked
+                  .map((p) => p.quote_total)
+                  .filter((t): t is number => t != null)
+                  .map(withFee);
                 const lo = totals.length ? Math.min(...totals) : null;
                 const hi = totals.length ? Math.max(...totals) : null;
                 return (
@@ -990,7 +1011,7 @@ export default function ProposalBuilderPage() {
                 <div style={{ display: "flex", gap: "var(--space-3)" }}>
                   <button
                     type="button"
-                    onClick={() => setShowPreview(true)}
+                    onClick={openPreview}
                     disabled={picked.length === 0}
                     style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-border)", background: "var(--color-bg)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: picked.length ? "pointer" : "not-allowed" }}
                   >
@@ -1057,47 +1078,31 @@ export default function ProposalBuilderPage() {
               </div>
             </div>
 
-            {/* Branded document. Kept mounted (off-screen) so "Download PDF"
-                (print) always has its target; "Preview" shows it as a modal. */}
-            <div
-              style={
-                showPreview
-                  ? { position: "fixed", inset: 0, zIndex: 100, background: "rgba(16,20,40,0.9)", overflowY: "auto", padding: "var(--space-8) var(--space-4)" }
-                  : { position: "fixed", left: "-10000px", top: 0, width: "820px" }
-              }
-            >
-              {showPreview && (
+            {/* Preview = the exact PDF HTML in an iframe (one source of truth
+                with the backend; Download PDF renders the same HTML server-side). */}
+            {showPreview && (
+              <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(16,20,40,0.9)", overflowY: "auto", padding: "var(--space-6) var(--space-4)" }}>
                 <button
                   type="button"
-                  onClick={() => setShowPreview(false)}
+                  onClick={() => {
+                    setShowPreview(false);
+                    setPreviewHtml(null);
+                  }}
                   style={{ position: "fixed", top: "var(--space-4)", right: "var(--space-4)", zIndex: 101, padding: "var(--space-3) var(--space-4)", background: "var(--color-bg)", border: "1px solid var(--color-border)", fontSize: "0.65rem", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, cursor: "pointer" }}
                 >
                   × Close preview
                 </button>
-              )}
-              <div style={{ maxWidth: "820px", margin: "0 auto" }}>
-                <ProposalDocument
-                  proposalRef={proposalRef}
-                  clientName={clientName}
-                  contactName={contact?.full_name ?? null}
-                  brief={brief}
-                  introCopy={introCopy}
-                  venues={picked.map((pv) => {
-                    const v = portfolio?.find((x) => x.id === pv.venue_id);
-                    return {
-                      name: v?.name ?? nameForVenue(pv.venue_id),
-                      district: v?.district ?? null,
-                      description: v?.description ?? null,
-                      images: (v?.venue_media ?? [])
-                        .filter((m) => m.kind === "photo" && m.url)
-                        .map((m) => m.url as string),
-                      breakdown: pv.quote_breakdown as unknown as Partial<QuoteBreakdown>,
-                      total: pv.quote_total,
-                    };
-                  })}
-                />
+                {previewHtml ? (
+                  <iframe
+                    title="Proposal preview"
+                    srcDoc={previewHtml}
+                    style={{ display: "block", margin: "0 auto", width: "min(900px, 100%)", height: "92vh", border: "none", background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}
+                  />
+                ) : (
+                  <div style={{ color: "#fff", textAlign: "center", paddingTop: "40vh" }}>Rendering preview…</div>
+                )}
               </div>
-            </div>
+            )}
           </div>
         )}
       </div>
@@ -1292,17 +1297,23 @@ function PricingCard({
             </div>
           ))}
           {qb.addons && qb.addons.length > 0 && (
-            <div style={{ padding: "var(--space-3) 0 0", fontSize: "0.82rem", color: "var(--color-text-muted)" }}>
+            <div style={{ padding: "var(--space-3) 0 var(--space-2)", fontSize: "0.82rem", color: "var(--color-text-muted)" }}>
               {qb.addons.map((a) => `${a.name} (${money(a.amount)})`).join(" · ")}
             </div>
           )}
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "var(--space-2) 0", fontSize: "0.9rem", fontWeight: 600, borderTop: "1px solid var(--color-border)" }}>
+            <span>Venue subtotal</span>
+            <span>{money(pv.quote_total)}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "var(--space-2) 0", fontSize: "0.85rem", color: "var(--color-accent)" }}>
+            <span>EVA Service Fee · {SERVICE_FEE_PCT}%</span>
+            <span>{money(Math.round((pv.quote_total ?? 0) * (SERVICE_FEE_PCT / 100)))}</span>
+          </div>
         </div>
         <div style={{ flex: "0 0 200px", background: "var(--color-navy)", color: "var(--color-navy-text)", padding: "var(--space-5)", display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <div style={{ fontSize: "0.6rem", letterSpacing: "0.14em", textTransform: "uppercase", opacity: 0.7 }}>Total</div>
-          <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.9rem", marginTop: "2px" }}>{money(pv.quote_total)}</div>
-          {engineTotal != null && overridden && (
-            <div style={{ fontSize: "0.72rem", opacity: 0.6, marginTop: "4px" }}>engine: {money(engineTotal)}</div>
-          )}
+          <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.9rem", marginTop: "2px" }}>{money(withFee(pv.quote_total ?? 0))}</div>
+          <div style={{ fontSize: "0.68rem", opacity: 0.6, marginTop: "4px" }}>incl. {SERVICE_FEE_PCT}% service fee{engineTotal != null && overridden ? " · overridden" : ""}</div>
         </div>
       </div>
 
@@ -1340,144 +1351,6 @@ function PricingCard({
           {saving ? "Saving…" : "Lock price"}
         </button>
       </div>
-    </div>
-  );
-}
-
-interface DocVenue {
-  name: string;
-  district: string | null;
-  description: string | null;
-  images: string[];
-  breakdown: Partial<QuoteBreakdown>;
-  total: number | null;
-}
-
-/** The branded proposal document — a navy cover + one section per venue.
- * This element (id="proposal-doc") is BOTH the on-screen preview and the
- * print-to-PDF target: globals.css hides everything else during print, so
- * the browser's "Save as PDF" produces exactly this. No PDF library needed. */
-function ProposalDocument({
-  proposalRef,
-  clientName,
-  contactName,
-  brief,
-  introCopy,
-  venues,
-}: {
-  proposalRef: string;
-  clientName: string;
-  contactName: string | null;
-  brief: Brief | null;
-  introCopy: string;
-  venues: DocVenue[];
-}) {
-  const money = (n?: number | null) => (n == null ? "—" : `HKD ${Number(n).toLocaleString()}`);
-  const window_ = formatWindow(brief);
-  const eventTitle = brief?.event_type ?? "Event Proposal";
-
-  const meta: [string, string][] = [
-    ["Guests", brief?.guest_count ? `${brief.guest_count} pax` : "—"],
-    ["Format", brief?.event_type ?? "—"],
-    ["Date", window_ ?? "—"],
-    ["Budget", budgetLine(brief) ?? "—"],
-  ];
-
-  return (
-    <div id="proposal-doc" style={{ border: "1px solid var(--color-border)", background: "#fff" }}>
-      {/* Cover */}
-      <div style={{ background: "var(--color-navy)", color: "var(--color-navy-text)", padding: "var(--space-12) var(--space-10)", minHeight: "420px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <span aria-hidden style={{ width: "40px", height: "40px", border: "1.5px solid var(--color-navy-text)", borderRadius: "5px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ width: "12px", height: "12px", borderRadius: "2px", background: "var(--color-navy-text)" }} />
-          </span>
-        </div>
-        <div>
-          <h1 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "2.4rem", color: "#e0a3ad", margin: 0, lineHeight: 1.2 }}>
-            {eventTitle} — <span style={{ fontStyle: "italic" }}>{clientName}</span>
-          </h1>
-          <div style={{ fontSize: "0.62rem", letterSpacing: "0.16em", textTransform: "uppercase", opacity: 0.7, marginTop: "var(--space-4)" }}>
-            Prepared for {clientName}
-            {window_ ? ` · ${window_}` : ""} · by Exclusive Venue
-          </div>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.6rem", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.55 }}>
-          <span>Exclusive Venue · Hong Kong</span>
-          <span>Proposal {proposalRef}</span>
-        </div>
-      </div>
-
-      {/* The brief */}
-      <div style={{ padding: "var(--space-8) var(--space-10)" }}>
-        <div style={{ ...SECTION_LABEL, color: "var(--color-accent)" }}>The brief</div>
-        {introCopy && (
-          <p style={{ fontFamily: "var(--font-serif)", fontSize: "1.15rem", lineHeight: 1.6, color: "var(--color-navy)", margin: "var(--space-3) 0 var(--space-6)", maxWidth: "620px" }}>
-            {introCopy}
-          </p>
-        )}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", borderTop: "1px solid var(--color-border)" }}>
-          {meta.map(([k, v]) => (
-            <div key={k} style={{ padding: "var(--space-4) 0", borderRight: "1px solid var(--color-border)", paddingRight: "var(--space-4)" }}>
-              <div style={{ fontSize: "0.58rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>{k}</div>
-              <div style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontSize: "1.05rem", marginTop: "4px" }}>{v}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* One section per venue */}
-      {venues.map((v, i) => {
-        const qb = v.breakdown ?? {};
-        const rows: [string, string][] = [];
-        if (qb.base_rate != null) rows.push(["Venue rental", money(qb.base_rate)]);
-        if (qb.per_head_total) rows.push(["Per-head catering", money(qb.per_head_total)]);
-        if (qb.duration_overtime_amount) rows.push(["Overtime", money(qb.duration_overtime_amount)]);
-        if (qb.addons_total) rows.push(["Add-ons", money(qb.addons_total)]);
-        return (
-          <div key={i} style={{ borderTop: "8px solid var(--color-surface)", breakInside: "avoid" }}>
-            <div style={{ width: "100%", height: "260px", background: "var(--color-surface)", overflow: "hidden" }}>
-              {v.images[0] && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={v.images[0]} alt={v.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              )}
-            </div>
-            <div style={{ padding: "var(--space-6) var(--space-10) var(--space-8)" }}>
-              <div style={{ ...SECTION_LABEL, color: "var(--color-accent)" }}>Option · {String(i + 1).padStart(2, "0")}</div>
-              <h2 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "2rem", margin: "2px 0 4px" }}>{v.name}</h2>
-              <div style={{ fontSize: "0.62rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>{v.district ?? "—"}</div>
-              {v.description && (
-                <p style={{ color: "var(--color-text-secondary)", lineHeight: 1.6, margin: "var(--space-4) 0", maxWidth: "620px" }}>{v.description}</p>
-              )}
-              {v.images.length > 1 && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "var(--space-2)", margin: "var(--space-4) 0" }}>
-                  {v.images.slice(1, 4).map((src, j) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img key={j} src={src} alt="" style={{ width: "100%", height: "90px", objectFit: "cover" }} />
-                  ))}
-                </div>
-              )}
-              <div style={{ marginTop: "var(--space-4)" }}>
-                {rows.map(([k, val]) => (
-                  <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "var(--space-2) 0", fontSize: "0.9rem", color: "var(--color-text-secondary)", borderBottom: "1px solid var(--color-border)" }}>
-                    <span>{k}</span>
-                    <span>{val}</span>
-                  </div>
-                ))}
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "var(--space-3) 0 0", fontFamily: "var(--font-serif)", fontSize: "1.2rem" }}>
-                  <span>Total</span>
-                  <span style={{ fontWeight: 600 }}>{money(v.total)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-
-      {venues.length === 0 && (
-        <div style={{ padding: "var(--space-10)", textAlign: "center", color: "var(--color-text-muted)" }}>
-          No venues on this proposal yet — add some in Step 2.
-        </div>
-      )}
     </div>
   );
 }

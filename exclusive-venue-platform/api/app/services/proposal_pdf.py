@@ -27,114 +27,257 @@ def _money(value: Any) -> str:
     return f"HKD {float(value):,.0f}"
 
 
-def render_proposal_html(
-    *,
-    proposal_ref: str,
-    client_name: str,
-    event_title: str,
-    window_str: str | None,
-    intro_copy: str | None,
-    meta: list[tuple[str, str]],
-    venues: list[dict[str, Any]],
-) -> str:
-    """Build the branded proposal HTML. `venues` items:
-    {name, district, description, images: [url], rows: [(label, value)], total}."""
-    meta_cells = "".join(
-        f'<div class="tile"><div class="tile-k">{_esc(k)}</div>'
-        f'<div class="tile-v">{_esc(v)}</div></div>'
-        for k, v in meta
+SERVICE_FEE_PCT = 12  # EVA Service Fee applied to every venue subtotal.
+
+
+def _headline(text: str) -> str:
+    """Render a two-part serif headline with the second half italic-accented
+    (matches the reference's '… different story.' styling). Split on the last
+    comma so the tail becomes the accent."""
+    if "," in text:
+        head, tail = text.rsplit(",", 1)
+        return f"{_esc(head)},<em> {_esc(tail.strip())}</em>"
+    return _esc(text)
+
+
+def render_proposal_html(ctx: dict[str, Any]) -> str:
+    """Build the full branded proposal document from a context dict (see
+    routers/proposals.py::_proposal_context). Six sections: cover, the brief,
+    the options (image beside details), the investment (itemised + EVA fee),
+    a side-by-side comparison, and a closing signed by the owner."""
+    money = _money
+    venues = ctx["venues"]
+
+    # --- 01 · the brief ---
+    brief_tiles = "".join(
+        f'<div class="tile"><div class="tk">{_esc(k)}</div><div class="tv">{_esc(v)}</div></div>'
+        for k, v in ctx["brief_meta"]
+    )
+    enquiry_cells = "".join(
+        f'<div class="ec"><div class="tk">{_esc(k)}</div><div class="ev">{_esc(v)}</div></div>'
+        for k, v in ctx["enquiry_rows"]
     )
 
-    venue_sections = ""
-    for i, v in enumerate(venues, start=1):
-        hero = v["images"][0] if v["images"] else None
-        thumbs = "".join(
-            f'<img class="thumb" src="{_esc(src)}" />' for src in v["images"][1:4]
-        )
-        rows = "".join(
-            f'<div class="row"><span>{_esc(k)}</span><span>{_esc(val)}</span></div>'
-            for k, val in v["rows"]
-        )
-        venue_sections += f"""
-        <section class="venue">
-          <div class="hero">{f'<img src="{_esc(hero)}" />' if hero else ''}</div>
-          <div class="venue-body">
-            <div class="eyebrow accent">Option · {i:02d}</div>
-            <h2>{_esc(v['name'])}</h2>
-            <div class="loc">{_esc(v.get('district') or '—')}</div>
-            {f'<p class="desc">{_esc(v["description"])}</p>' if v.get('description') else ''}
-            {f'<div class="thumbs">{thumbs}</div>' if thumbs else ''}
-            <div class="breakdown">
-              {rows}
-              <div class="total"><span>Total</span><span>{_money(v['total'])}</span></div>
+    # --- 02 · the options (image beside details) ---
+    option_blocks = ""
+    for v in venues:
+        bullets = "".join(f'<span class="am">◆ {_esc(a)}</span>' for a in v["amenities"])
+        img = f'<img src="{_esc(v["image"])}" />' if v.get("image") else ""
+        option_blocks += f"""
+        <div class="opt">
+          <div class="opt-img">{img}<span class="opt-tag">Option · {v['index']:02d}</span></div>
+          <div class="opt-body">
+            <div class="eyebrow accent">Option · {v['index']:02d}</div>
+            <h3>{_esc(v['name'])}</h3>
+            <div class="loc">{_esc(v['location_line'])}</div>
+            {f'<p class="desc">{_esc(v["description"])}</p>' if v.get("description") else ""}
+            <div class="ams">{bullets}</div>
+            <div class="fromrow"><span class="from">From</span><span class="fromval serif">{money(v['total'])}</span></div>
+          </div>
+        </div>"""
+
+    # --- 03 · investment (dark, itemised) ---
+    invest_blocks = ""
+    for v in venues:
+        img = f'<img src="{_esc(v["image"])}" />' if v.get("image") else ""
+        invest_blocks += f"""
+        <div class="inv">
+          <div class="inv-img">{img}</div>
+          <div class="inv-body">
+            <div class="eyebrow" style="color:#c9a24a">Option · {v['index']:02d}</div>
+            <h3 class="serif">{_esc(v['name'])}</h3>
+            <div class="inv-meta serif">{_esc(v['meta_line'])}</div>
+            <div class="inv-line"><span>Venue rate <em class="serif">{money(v['rate_per_hr'])} / hr</em></span></div>
+            <div class="inv-line sub">{_esc(v['hours_label'])}</div>
+            <div class="inv-line bold"><span>Venue subtotal</span><span>{money(v['subtotal'])}</span></div>
+            <div class="fee">
+              <div class="fee-row"><span><strong>EVA Service Fee</strong> · {SERVICE_FEE_PCT}%</span><span>{money(v['fee'])}</span></div>
+              <div class="fee-note">Covers venue curation, contract negotiation, on-day production support, supplier coordination.</div>
             </div>
           </div>
-        </section>"""
+          <div class="inv-total"><div class="tk" style="color:#c9a24a">Total</div><div class="serif big">{money(v['total'])}</div></div>
+        </div>"""
+
+    # --- side-by-side comparison ---
+    compare_cards = ""
+    for v in venues:
+        pick = f'<span class="pick">◆ {_esc(ctx["owner_first"])}’s pick</span>' if v.get("recommended") else ""
+        compare_cards += f"""
+        <div class="cmp{' cmp-pick' if v.get('recommended') else ''}">
+          {pick}
+          <div class="eyebrow" style="color:#c9a24a">Option · {v['index']:02d}</div>
+          <h3 class="serif">{_esc(v['name'])}</h3>
+          <div class="cmp-loc">{_esc(v['location_line'])}</div>
+          <div class="cmp-row"><span>Rate / hr</span><span>{money(v['rate_per_hr'])}</span></div>
+          <div class="cmp-row"><span>Hours booked</span><span>{_esc(v['hours'])} hrs</span></div>
+          <div class="cmp-row"><span>Venue subtotal</span><span>{money(v['subtotal'])}</span></div>
+          <div class="cmp-row fee-i"><span>EVA Service Fee · {SERVICE_FEE_PCT}%</span><span>{money(v['fee'])}</span></div>
+          <div class="cmp-total"><span>Total</span><span class="serif">{money(v['total'])}</span></div>
+        </div>"""
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500;1,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root {{ --navy:#1b2a4a; --accent:#a0192d; --cream:#f2f0ed; --paper:#fbfaf7;
-           --ink:#1b2a4a; --muted:#8a8f99; --border:rgba(27,42,74,0.16); }}
+  :root {{ --navy:#1b2a4a; --navy2:#22315a; --accent:#a0192d; --gold:#c9a24a; --cream:#f2f0ed;
+           --paper:#faf9f6; --ink:#1b2a4a; --muted:#8a8f99; --border:rgba(27,42,74,0.14); }}
   * {{ box-sizing:border-box; margin:0; padding:0; }}
   html {{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }}
-  body {{ font-family:'Inter',sans-serif; color:var(--ink); background:#fff; }}
+  body {{ font-family:'Inter',sans-serif; color:var(--ink); background:var(--paper); font-size:13px; }}
   .serif {{ font-family:'Cormorant Garamond',serif; }}
-  .eyebrow {{ font-size:9px; letter-spacing:2px; text-transform:uppercase; font-weight:600; }}
+  .eyebrow {{ font-size:9px; letter-spacing:2.5px; text-transform:uppercase; font-weight:600; }}
   .accent {{ color:var(--accent); }}
-  .cover {{ background:var(--navy); color:var(--cream); padding:60px 56px; height:60vh;
-            display:flex; flex-direction:column; justify-content:space-between; page-break-after:always; }}
+  h1,h2,h3 {{ font-family:'Cormorant Garamond',serif; font-weight:500; }}
+  em {{ font-style:italic; }}
+  section {{ padding:56px; page-break-inside:avoid; }}
+  .head {{ font-size:38px; line-height:1.15; color:var(--navy); margin:10px 0 18px; }}
+  .head em {{ color:var(--accent); }}
+  .lead {{ color:#5b6474; line-height:1.6; max-width:620px; }}
+
+  /* cover */
+  .cover {{ background:var(--navy); color:var(--cream); height:62vh; display:flex;
+            flex-direction:column; justify-content:space-between; page-break-after:always; }}
   .logo {{ width:40px; height:40px; border:1.5px solid var(--cream); border-radius:5px;
            display:flex; align-items:center; justify-content:center; margin:0 auto; }}
   .logo i {{ width:12px; height:12px; background:var(--cream); border-radius:2px; }}
-  .cover h1 {{ font-family:'Cormorant Garamond',serif; font-weight:500; font-size:40px;
-               line-height:1.2; color:#e0a3ad; }}
-  .cover h1 em {{ font-style:italic; }}
-  .cover .prep {{ font-size:9px; letter-spacing:2px; text-transform:uppercase; opacity:.7; margin-top:16px; }}
+  .cover h1 {{ font-size:42px; line-height:1.15; color:#e0a3ad; }}
+  .cover .prep {{ font-size:9px; letter-spacing:2.5px; text-transform:uppercase; opacity:.7; margin-top:16px; }}
   .cover .foot {{ display:flex; justify-content:space-between; font-size:8px; letter-spacing:1.5px;
                   text-transform:uppercase; opacity:.55; }}
-  .brief {{ padding:36px 56px; }}
-  .brief .intro {{ font-family:'Cormorant Garamond',serif; font-size:19px; line-height:1.6;
-                   color:var(--navy); margin:12px 0 24px; max-width:620px; }}
-  .tiles {{ display:flex; border-top:1px solid var(--border); }}
-  .tile {{ flex:1; padding:16px 16px 16px 0; border-right:1px solid var(--border); }}
-  .tile:last-child {{ border-right:none; }}
-  .tile-k {{ font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }}
-  .tile-v {{ font-family:'Cormorant Garamond',serif; font-style:italic; font-size:17px; margin-top:4px; }}
-  .venue {{ border-top:8px solid var(--cream); page-break-inside:avoid; }}
-  .venue .hero {{ width:100%; height:280px; background:var(--cream); overflow:hidden; }}
-  .venue .hero img {{ width:100%; height:100%; object-fit:cover; }}
-  .venue-body {{ padding:24px 56px 40px; }}
-  .venue-body h2 {{ font-family:'Cormorant Garamond',serif; font-weight:500; font-size:32px; margin:2px 0 4px; }}
-  .venue-body .loc {{ font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }}
-  .venue-body .desc {{ color:#5b6474; line-height:1.6; margin:16px 0; max-width:620px; }}
-  .thumbs {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:16px 0; }}
-  .thumb {{ width:100%; height:90px; object-fit:cover; }}
-  .breakdown {{ margin-top:16px; }}
-  .row {{ display:flex; justify-content:space-between; padding:8px 0; font-size:13px;
-          color:#5b6474; border-bottom:1px solid var(--border); }}
-  .total {{ display:flex; justify-content:space-between; padding:12px 0 0;
-            font-family:'Cormorant Garamond',serif; font-size:19px; }}
-  .total span:last-child {{ font-weight:600; }}
+
+  /* 01 brief */
+  .grid2 {{ display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--border); margin-top:8px; }}
+  .tile {{ padding:18px 20px 18px 0; border-right:1px solid var(--border); border-bottom:1px solid var(--border); }}
+  .tile:nth-child(2n) {{ border-right:none; padding-left:20px; }}
+  .tk {{ font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }}
+  .tv {{ font-family:'Cormorant Garamond',serif; font-style:italic; font-size:18px; margin-top:4px; }}
+  .enq {{ border:1px solid var(--border); background:#fff; padding:22px 26px; margin-top:28px; }}
+  .enq-h {{ font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--accent); font-weight:700; margin-bottom:14px; }}
+  .enq-grid {{ display:grid; grid-template-columns:repeat(3,1fr); gap:18px 24px; }}
+  .ev {{ font-size:13px; margin-top:3px; color:var(--ink); }}
+
+  /* 02 options */
+  .opt {{ display:flex; gap:36px; padding:22px 0; border-top:1px solid var(--border); page-break-inside:avoid; }}
+  .opt:first-of-type {{ border-top:none; }}
+  .opt-img {{ position:relative; flex:0 0 46%; height:300px; background:var(--cream); overflow:hidden; }}
+  .opt-img img {{ width:100%; height:100%; object-fit:cover; }}
+  .opt-tag {{ position:absolute; top:16px; left:16px; background:var(--navy); color:#fff;
+             font-size:8px; letter-spacing:1.5px; text-transform:uppercase; font-weight:700; padding:5px 10px; }}
+  .opt-body {{ flex:1; display:flex; flex-direction:column; }}
+  .opt-body h3 {{ font-size:30px; margin:4px 0 2px; }}
+  .loc {{ font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }}
+  .desc {{ color:#5b6474; line-height:1.6; margin:16px 0; }}
+  .ams {{ display:flex; flex-wrap:wrap; gap:8px 20px; margin:6px 0 auto; }}
+  .am {{ font-size:11px; color:#5b6474; }}
+  .am::first-letter {{ color:var(--accent); }}
+  .fromrow {{ display:flex; align-items:baseline; gap:10px; border-top:1px solid var(--border);
+             padding-top:14px; margin-top:18px; }}
+  .from {{ font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }}
+  .fromval {{ font-size:24px; }}
+
+  /* 03 investment (dark) */
+  .dark {{ background:var(--navy); color:#dfe3ee; }}
+  .dark .head {{ color:#fff; }}
+  .dark .head em {{ color:var(--gold); }}
+  .dark .lead {{ color:#aab2c6; }}
+  .inv {{ display:flex; gap:0; margin-top:22px; page-break-inside:avoid; }}
+  .inv-img {{ flex:0 0 140px; height:auto; min-height:170px; background:var(--navy2); overflow:hidden; }}
+  .inv-img img {{ width:100%; height:100%; object-fit:cover; }}
+  .inv-body {{ flex:1; background:var(--navy2); padding:22px 26px; }}
+  .inv-body h3 {{ font-size:24px; color:#fff; margin:2px 0 6px; }}
+  .inv-meta {{ font-style:italic; color:#9aa4bd; font-size:13px; border-bottom:1px solid rgba(255,255,255,.12);
+              padding-bottom:14px; margin-bottom:14px; }}
+  .inv-line {{ display:flex; justify-content:space-between; padding:5px 0; color:#cdd3e2; }}
+  .inv-line.sub {{ color:#8b93ab; font-size:11px; border-bottom:1px dashed rgba(255,255,255,.15); padding-bottom:12px; }}
+  .inv-line.bold {{ color:#fff; font-weight:600; padding-top:12px; }}
+  .fee {{ border-left:2px solid var(--gold); background:rgba(201,162,74,.08); padding:12px 16px; margin-top:14px; }}
+  .fee-row {{ display:flex; justify-content:space-between; color:#e7cd94; }}
+  .fee-note {{ font-size:10px; color:#9aa4bd; margin-top:6px; line-height:1.5; }}
+  .inv-total {{ flex:0 0 190px; background:#2a2340; display:flex; flex-direction:column;
+               justify-content:center; align-items:flex-end; padding:22px 24px; }}
+  .inv-total .big {{ font-size:30px; color:#fff; }}
+
+  /* comparison (dark) */
+  .cmp-wrap {{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:24px; }}
+  .cmp {{ position:relative; border:1px solid rgba(255,255,255,.14); padding:22px; }}
+  .cmp-pick {{ border-color:var(--gold); }}
+  .pick {{ position:absolute; top:-11px; right:16px; background:var(--gold); color:var(--navy);
+          font-size:8px; letter-spacing:1px; text-transform:uppercase; font-weight:700; padding:4px 9px; }}
+  .cmp h3 {{ font-size:24px; color:#fff; margin:2px 0; }}
+  .cmp-loc {{ font-size:11px; color:#8b93ab; margin-bottom:14px; }}
+  .cmp-row {{ display:flex; justify-content:space-between; padding:7px 0; font-size:12px; color:#cdd3e2;
+             border-bottom:1px solid rgba(255,255,255,.08); }}
+  .cmp-row.fee-i {{ font-style:italic; color:#9aa4bd; }}
+  .cmp-total {{ display:flex; justify-content:space-between; align-items:baseline; padding-top:14px; color:#fff; }}
+  .cmp-total .serif {{ font-size:24px; }}
+  .terms {{ display:flex; justify-content:space-between; font-size:10px; color:#8b93ab; margin-top:22px;
+           letter-spacing:.5px; }}
+
+  /* closing */
+  .close {{ background:var(--paper); text-align:center; }}
+  .close h2 {{ font-size:34px; color:var(--navy); line-height:1.2; max-width:640px; margin:0 auto; }}
+  .close h2 em {{ color:var(--accent); }}
+  .close .note {{ color:#8b93ab; font-style:italic; max-width:460px; margin:16px auto 26px; line-height:1.6; }}
+  .cta {{ display:inline-flex; gap:12px; }}
+  .btn {{ padding:14px 26px; font-size:10px; letter-spacing:2px; text-transform:uppercase; font-weight:700; }}
+  .btn-p {{ background:var(--accent); color:#fff; }}
+  .btn-s {{ border:1px solid var(--border); color:var(--navy); }}
+  .sig {{ border-top:1px solid var(--border); margin:36px auto 0; padding-top:22px; max-width:320px; }}
+  .sig .name {{ font-family:'Cormorant Garamond',serif; font-style:italic; font-size:18px; color:var(--navy); }}
+  .sig .role {{ font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); margin-top:4px; }}
 </style></head>
 <body>
-  <div class="cover">
+  <div class="cover" style="padding:60px 56px">
     <div class="logo"><i></i></div>
     <div>
-      <h1>{_esc(event_title)} — <em>{_esc(client_name)}</em></h1>
-      <div class="prep">Prepared for {_esc(client_name)}{f' · {_esc(window_str)}' if window_str else ''} · by Exclusive Venue</div>
+      <h1>{_esc(ctx['event_title'])} — <em>{_esc(ctx['client_name'])}</em></h1>
+      <div class="prep">Prepared for {_esc(ctx['client_name'])}{f" · {_esc(ctx['window_str'])}" if ctx.get('window_str') else ''} · by Exclusive Venue</div>
     </div>
-    <div class="foot"><span>Exclusive Venue · Hong Kong</span><span>Proposal {_esc(proposal_ref)}</span></div>
+    <div class="foot"><span>Exclusive Venue · {_esc(ctx.get('region') or 'Hong Kong')}</span><span>Proposal {_esc(ctx['proposal_ref'])} · v{ctx.get('version', 1)}</span></div>
   </div>
-  <div class="brief">
-    <div class="eyebrow accent">The brief</div>
-    {f'<p class="intro">{_esc(intro_copy)}</p>' if intro_copy else ''}
-    <div class="tiles">{meta_cells}</div>
-  </div>
-  {venue_sections}
+
+  <section>
+    <div class="eyebrow accent">01 · The brief, as we read it</div>
+    <h2 class="head serif">{_headline(ctx['headline'])}</h2>
+    {f'<p class="lead">{_esc(ctx["intro_copy"])}</p>' if ctx.get('intro_copy') else ''}
+    <div class="grid2">{brief_tiles}</div>
+    <div class="enq">
+      <div class="enq-h">◆ Your enquiry · captured {_esc(ctx.get('captured_date') or '')} · ref {_esc(ctx['proposal_ref'])}</div>
+      <div class="enq-grid">{enquiry_cells}</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow accent">02 · {_esc(ctx['option_count_word'])} options</div>
+    <h2 class="head serif">Each tells a<em> different story.</em></h2>
+    {option_blocks}
+  </section>
+
+  <section class="dark">
+    <div class="eyebrow" style="color:var(--gold)">03 · Investment</div>
+    <h2 class="head serif">Pricing,<em> without surprises.</em></h2>
+    <p class="lead">Every line itemised — per-hour rate, hours booked, venue subtotal. The EVA Service Fee is shown clearly; it covers everything you don’t have to do yourself.</p>
+    {invest_blocks}
+  </section>
+
+  <section class="dark">
+    <div class="eyebrow" style="color:var(--gold)">For procurement · side-by-side</div>
+    <h2 class="head serif">All {_esc(ctx['option_count_word'])},<em> at a glance.</em></h2>
+    <div class="cmp-wrap">{compare_cards}</div>
+    <div class="terms"><span>All prices in {_esc(ctx['currency'])} · quotes valid 72 hours · payment 50% at signature, 50% on handover</span></div>
+  </section>
+
+  <section class="close">
+    <h2 class="serif">Shall we walk you through<em> which one speaks loudest?</em></h2>
+    <p class="note">Each option is on soft hold for 72 hours. Reach out and we’ll arrange a private tour or a call this week.</p>
+    <div class="cta"><span class="btn btn-p">Schedule a call</span><span class="btn btn-s">Reply via email</span></div>
+    <div class="sig">
+      <div class="name">{_esc(ctx['owner_name'])}</div>
+      <div class="role">{_esc(ctx.get('owner_role') or 'Account manager')} · {_esc(ctx.get('region') or 'Hong Kong')} · Exclusive Venue</div>
+    </div>
+  </section>
 </body></html>"""
 
 

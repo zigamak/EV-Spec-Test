@@ -117,6 +117,14 @@ EXTRACT_BRIEF_TOOL = ToolSchema(
             "location_preference": {
                 "type": ["string", "null"],
             },
+            "catering": {
+                "type": ["string", "null"],
+                "description": "Catering brief if mentioned, e.g. 'light bites and champagne'.",
+            },
+            "decision_by": {
+                "type": ["string", "null"],
+                "description": "ISO 8601 date (YYYY-MM-DD) the client needs to decide by, if stated.",
+            },
             "requirements": {
                 "type": "object",
                 "description": (

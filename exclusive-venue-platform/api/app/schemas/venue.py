@@ -32,6 +32,7 @@ class VenueCreate(BaseModel):
     district: str | None = None
     landlord_id: UUID | None = None
     status: VenueStatus = "draft"
+    amenities: list[str] = Field(default_factory=list)
 
 
 class VenueUpdate(BaseModel):
@@ -42,6 +43,7 @@ class VenueUpdate(BaseModel):
     district: str | None = None
     status: VenueStatus | None = None
     hero_media_id: UUID | None = None
+    amenities: list[str] | None = None
 
 
 class Venue(BaseModel):
@@ -53,6 +55,7 @@ class Venue(BaseModel):
     district: str | None
     landlord_id: UUID | None
     status: VenueStatus
+    amenities: list[str] = Field(default_factory=list)
     approved_by: UUID | None
     approved_at: datetime | None
     hero_media_id: UUID | None
