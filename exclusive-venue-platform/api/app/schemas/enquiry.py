@@ -28,6 +28,12 @@ class OrganisationCreate(BaseModel):
     rate_card_on_file: bool = False
     rate_card_terms: str | None = None
     region: str | None = None
+    website: str | None = None
+    address: str | None = None
+    notes: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    parent_company: str | None = None
 
 
 class OrganisationUpdate(BaseModel):
@@ -37,6 +43,12 @@ class OrganisationUpdate(BaseModel):
     rate_card_on_file: bool | None = None
     rate_card_terms: str | None = None
     region: str | None = None
+    website: str | None = None
+    address: str | None = None
+    notes: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    parent_company: str | None = None
 
 
 class Organisation(BaseModel):
@@ -53,6 +65,15 @@ class Organisation(BaseModel):
     rate_card_on_file: bool
     rate_card_terms: str | None
     region: str | None
+    # Contacts-directory fields (task, 19 Jul, migration 0018).
+    website: str | None
+    address: str | None
+    notes: str | None
+    # Brand-level contact channel (migration 0019) — distinct from any one
+    # contact's own email/phone.
+    email: str | None
+    phone: str | None
+    parent_company: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -61,6 +82,7 @@ class ContactCreate(BaseModel):
     full_name: str = Field(min_length=1)
     email: str | None = None
     phone: str | None = None
+    role: str | None = None
     organisation_id: UUID | None = None
     source: ContactSource
 
@@ -69,6 +91,7 @@ class ContactUpdate(BaseModel):
     full_name: str | None = Field(default=None, min_length=1)
     email: str | None = None
     phone: str | None = None
+    role: str | None = None
     organisation_id: UUID | None = None
 
 
@@ -77,6 +100,7 @@ class Contact(BaseModel):
     full_name: str
     email: str | None
     phone: str | None
+    role: str | None
     organisation_id: UUID | None
     source: ContactSource
     created_at: datetime

@@ -29,7 +29,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${cormorant.variable} ${inter.variable}`}>
-      <body>{children}</body>
+      {/* suppressHydrationWarning: browser extensions (Grammarly, DarkReader,
+          password managers) inject data-* attributes onto <body> before
+          React hydrates, which otherwise logs a false-positive mismatch
+          warning here — this only silences that one tag's own attributes,
+          not a real hydration bug in its children. */}
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }

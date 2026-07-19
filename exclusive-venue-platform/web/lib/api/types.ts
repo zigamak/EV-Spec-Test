@@ -294,6 +294,32 @@ export type OrganisationTier = "tier-1" | "tier-2" | "standard";
 // channel-agnostic, so every intake channel needs to be a real value here
 // rather than falling back to 'manual' or 'other'.
 export type ContactSource = "email" | "web_form" | "concierge" | "manual" | "whatsapp";
+
+export const ORGANISATION_KINDS: OrganisationKind[] = ["brand", "corporate", "agency", "production_house", "other"];
+
+export const ORGANISATION_KIND_LABEL: Record<OrganisationKind, string> = {
+  brand: "Brand",
+  corporate: "Corporate",
+  agency: "Agency",
+  production_house: "Production house",
+  other: "Other",
+};
+
+export const ORGANISATION_TIERS: OrganisationTier[] = ["tier-1", "tier-2", "standard"];
+
+export const ORGANISATION_TIER_LABEL: Record<OrganisationTier, string> = {
+  "tier-1": "Tier 1",
+  "tier-2": "Tier 2",
+  standard: "Standard",
+};
+
+export const CONTACT_SOURCE_LABEL: Record<ContactSource, string> = {
+  email: "Email",
+  web_form: "Web form",
+  concierge: "Concierge",
+  manual: "Manual",
+  whatsapp: "WhatsApp",
+};
 export type EnquiryChannel = "email" | "web_form" | "manual" | "concierge" | "whatsapp";
 // Revamped 18 Jul (task H3) — 5-stage Kanban (Enquiry -> Briefed ->
 // Proposed -> Held -> Signed) matching the full Inquiries -> Proposal ->
@@ -355,6 +381,17 @@ export interface Organisation {
   rate_card_on_file: boolean;
   rate_card_terms: string | null;
   region: string | null;
+  // Contacts-directory fields (19 Jul, migration 0018).
+  website: string | null;
+  address: string | null;
+  notes: string | null;
+  // Brand-level contact channel (migration 0019) — distinct from any one
+  // contact's own email/phone.
+  email: string | null;
+  phone: string | null;
+  parent_company: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface OrganisationCreate {
@@ -364,6 +401,27 @@ export interface OrganisationCreate {
   rate_card_on_file?: boolean;
   rate_card_terms?: string | null;
   region?: string | null;
+  website?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  parent_company?: string | null;
+}
+
+export interface OrganisationUpdate {
+  name?: string;
+  kind?: OrganisationKind;
+  tier?: OrganisationTier | null;
+  rate_card_on_file?: boolean;
+  rate_card_terms?: string | null;
+  region?: string | null;
+  website?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  parent_company?: string | null;
 }
 
 export interface Contact {
@@ -371,6 +429,7 @@ export interface Contact {
   full_name: string;
   email: string | null;
   phone: string | null;
+  role: string | null;
   organisation_id: string | null;
   source: ContactSource;
   created_at: string;
@@ -380,8 +439,71 @@ export interface ContactCreate {
   full_name: string;
   email?: string | null;
   phone?: string | null;
+  role?: string | null;
   organisation_id?: string | null;
   source: ContactSource;
+}
+
+export interface ContactUpdate {
+  full_name?: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: string | null;
+  organisation_id?: string | null;
+}
+
+export interface DealStats {
+  enquiry_count: number;
+  signed_count: number;
+  total_revenue: number;
+  currency: string | null;
+  last_contact_at: string | null;
+  proposal_count: number;
+  open_proposal_count: number;
+  win_rate: number | null;
+}
+
+export interface OrganisationSummary {
+  organisation: Organisation;
+  contacts: Contact[];
+  stats: DealStats;
+  auto_imported: boolean;
+}
+
+export interface ContactSummary {
+  contact: Contact;
+  organisation: Organisation | null;
+  stats: DealStats;
+}
+
+export type TimelineType =
+  | "onboarded"
+  | "enquiry_received"
+  | "brief_parsed"
+  | "proposal_sent"
+  | "proposal_won"
+  | "proposal_declined"
+  | "activity";
+
+export type TimelineCategory = "system" | "email" | "proposal" | "event";
+
+export interface TimelineEntry {
+  id: string;
+  type: TimelineType;
+  category: TimelineCategory;
+  timestamp: string;
+  label: string;
+  title: string;
+  contact_name: string | null;
+  contact_email: string | null;
+  body: string | null;
+  fields: Record<string, string> | null;
+  venues: string[] | null;
+  price_low: number | null;
+  price_high: number | null;
+  currency: string | null;
+  enquiry_id: string | null;
+  proposal_id: string | null;
 }
 
 export interface Enquiry {
