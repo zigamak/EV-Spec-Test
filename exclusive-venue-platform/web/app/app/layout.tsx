@@ -119,21 +119,11 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "0 var(--space-2)" }}>
-          <span
-            aria-hidden
-            style={{
-              width: "34px",
-              height: "34px",
-              flexShrink: 0,
-              border: "1.5px solid var(--color-navy-text)",
-              borderRadius: "4px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: "var(--color-navy-text)" }} />
-          </span>
+          <img
+            src="/logo-white.png"
+            alt="Exclusive Venue"
+            style={{ width: "34px", height: "auto", flexShrink: 0 }}
+          />
           <span style={{ lineHeight: 1.1 }}>
             <span style={{ display: "block", fontFamily: "var(--font-serif)", fontSize: "1.2rem" }}>
               Exclusive&middot;Venue

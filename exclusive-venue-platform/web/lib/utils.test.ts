@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { avatarColorForId, daysSince, slugify, toIsoDate } from "./utils";
+import { avatarColorForId, daysSince, daysUntil, slugify, toIsoDate } from "./utils";
 
 describe("slugify", () => {
   it("lowercases and hyphenates", () => {
@@ -50,5 +50,17 @@ describe("daysSince", () => {
   it("returns the correct day count for a past date", () => {
     const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
     expect(daysSince(fiveDaysAgo)).toBe(5);
+  });
+});
+
+describe("daysUntil", () => {
+  it("returns a positive count for a future date", () => {
+    const inTenDays = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
+    expect(daysUntil(inTenDays)).toBe(10);
+  });
+
+  it("returns a negative count for a date already past", () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    expect(daysUntil(threeDaysAgo)).toBe(-3);
   });
 });

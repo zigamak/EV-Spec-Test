@@ -56,6 +56,15 @@ export function daysSince(isoDate: string): number {
   return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
 }
 
+/** Signed day-count to a future (or past) date — positive = still ahead,
+ * negative = already passed. Used for "event in N days" urgency, where
+ * an already-past date window on a still-open enquiry is itself useful
+ * signal (an unconverted enquiry whose event date has lapsed). */
+export function daysUntil(isoDate: string): number {
+  const ms = new Date(isoDate).getTime() - Date.now();
+  return Math.ceil(ms / (1000 * 60 * 60 * 24));
+}
+
 /** Compact "received X ago" label for the inbox (e.g. "9 min", "2 h",
  * "Yest.", "3 d", "2 wk", then falls back to a short date). */
 export function relativeTime(isoDate: string): string {

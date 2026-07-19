@@ -18,3 +18,24 @@ export const TEAM: TeamMember[] = [
 
 /** Sentinel used when forwarding to everyone at once. */
 export const WHOLE_TEAM = "The whole team";
+
+/** Fixed palette for per-salesperson filters/badges — reuses the four brand
+ * tokens already defined in tokens.provisional.css, one per team member,
+ * rather than a hashed color that could collide. Shared by the Pipeline
+ * board and the bookings Calendar so the same person reads as the same
+ * color everywhere in the app. */
+export const OWNER_COLOR: Record<string, string> = {
+  "Sammi Chiu": "var(--color-accent)",
+  "Crystal Lam": "var(--color-navy)",
+  "Henry Wong": "var(--color-success)",
+  "Saoud Maherzi": "var(--color-brass)",
+};
+
+export function initialsFromName(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("");
+}
