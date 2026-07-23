@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
-import { TEAM, WHOLE_TEAM } from "@/lib/team";
+import { OWNER_COLOR, TEAM, WHOLE_TEAM } from "@/lib/team";
 import type { EnquiryWithBriefs, VenueAvailability, VenueWithAvailability } from "@/lib/api/types";
 import { toIsoDate } from "@/lib/utils";
 
@@ -17,15 +17,9 @@ import { toIsoDate } from "@/lib/utils";
 const SIGNED_COLOR = "var(--color-accent)";
 const BOOKED_COLOR = "var(--color-navy)";
 
-// Fixed palette for the owner filter — reuses the four brand tokens
-// already defined in tokens.provisional.css, one per team member
-// (lib/team.ts), rather than a hashed color that could collide.
-const OWNER_COLOR: Record<string, string> = {
-  "Sammi Chiu": "var(--color-accent)",
-  "Crystal Lam": "var(--color-navy)",
-  "Henry Wong": "var(--color-success)",
-  "Saoud Maherzi": "var(--color-brass)",
-};
+// OWNER_COLOR for the owner filter/avatars now comes from lib/team.ts —
+// shared with the Pipeline board so a salesperson renders in the same
+// color on both pages (previously duplicated here, could drift).
 
 interface BookedWindow extends VenueAvailability {
   venue_name: string;

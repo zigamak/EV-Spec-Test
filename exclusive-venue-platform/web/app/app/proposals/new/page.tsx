@@ -453,12 +453,17 @@ export default function ProposalBuilderPage() {
   }
 
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  // Tracks whether the PDF's been downloaded at least once this session —
+  // Gmail's compose-via-URL can't attach a file for you, so this drives
+  // the "attach it before sending" reminder next to Open in Gmail below.
+  const [hasDownloadedPdf, setHasDownloadedPdf] = useState(false);
   async function downloadPdf() {
     if (!proposal) return;
     setDownloadingPdf(true);
     setError(null);
     try {
       await apiDownload(`/proposals/${proposal.id}/pdf`, `Proposal_${proposalRef.replace("#", "")}.pdf`);
+      setHasDownloadedPdf(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't generate the PDF.");
     } finally {
@@ -932,11 +937,12 @@ export default function ProposalBuilderPage() {
           <div>
             <div style={EYEBROW}>Step 04 · Generate &amp; share</div>
             <h2 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: "2.6rem", margin: "var(--space-3) 0 var(--space-2)" }}>
-              One click. <span style={{ fontStyle: "italic", color: "var(--color-accent)" }}>Link generated, PDF ready.</span>
+              One click. <span style={{ fontStyle: "italic", color: "var(--color-accent)" }}>PDF ready to attach.</span>
             </h2>
             <p style={{ color: "var(--color-text-secondary)", maxWidth: "680px", marginTop: 0 }}>
               The branded proposal below <em>is</em> the PDF — &ldquo;Download PDF&rdquo; prints it. Draft the client note with
-              AI, then send it through Gmail. (Sending directly from EV is a later SMTP/API decision.)
+              AI, then open Gmail and attach the downloaded PDF before sending. (Sending directly from EV, with the PDF attached
+              automatically, is a later SMTP/API decision.)
             </p>
 
             {/* Generated banner */}
@@ -963,10 +969,40 @@ export default function ProposalBuilderPage() {
                 );
               })()}
 
-            {/* Deliverables */}
+            {/* Deliverables — PDF leads: it's what actually goes to the
+                client now (attached in Gmail), not the share link. */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "var(--space-5)", marginTop: "var(--space-5)" }}>
+              <div style={{ background: "var(--color-bg)", border: "1px solid var(--color-accent)", padding: "var(--space-6)" }}>
+                <div style={{ ...EYEBROW, color: "var(--color-accent)" }}>Deliverable · 01 · attach this</div>
+                <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.5rem", margin: "2px 0 var(--space-4)" }}>
+                  PDF <span style={{ fontStyle: "italic" }}>document</span>
+                </div>
+                <p style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)", margin: "0 0 var(--space-4)" }}>
+                  A branded, standard-format proposal document. Preview it exactly as the client will see it, then download and
+                  attach it to the email below.
+                </p>
+                <div style={{ display: "flex", gap: "var(--space-3)" }}>
+                  <button
+                    type="button"
+                    onClick={openPreview}
+                    disabled={picked.length === 0}
+                    style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-border)", background: "var(--color-bg)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: picked.length ? "pointer" : "not-allowed" }}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadPdf}
+                    disabled={picked.length === 0 || downloadingPdf}
+                    style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-accent)", background: picked.length ? "var(--color-accent)" : "var(--color-surface)", color: picked.length ? "#fff" : "var(--color-text-muted)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: picked.length ? "pointer" : "not-allowed" }}
+                  >
+                    {downloadingPdf ? "Generating…" : hasDownloadedPdf ? "✓ Downloaded — download again" : "Download PDF"}
+                  </button>
+                </div>
+              </div>
+
               <div style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", padding: "var(--space-6)" }}>
-                <div style={{ ...EYEBROW, color: "var(--color-accent)" }}>Deliverable · 01</div>
+                <div style={{ ...EYEBROW, color: "var(--color-text-muted)" }}>Deliverable · 02 · optional</div>
                 <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.5rem", margin: "2px 0 var(--space-4)" }}>
                   Web <span style={{ fontStyle: "italic" }}>proposal</span>
                 </div>
@@ -985,7 +1021,8 @@ export default function ProposalBuilderPage() {
                       </button>
                     </div>
                     <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "var(--space-3)" }}>
-                      Public read-only page (G5) is still pending — the token + endpoint exist.
+                      Public read-only page (G5) is still pending — the token + endpoint exist. The client note below no longer
+                      mentions this link; the PDF is the primary deliverable now.
                     </p>
                   </>
                 ) : (
@@ -998,34 +1035,6 @@ export default function ProposalBuilderPage() {
                     {creatingLink ? "Creating…" : "Generate link"}
                   </button>
                 )}
-              </div>
-
-              <div style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", padding: "var(--space-6)" }}>
-                <div style={{ ...EYEBROW, color: "var(--color-accent)" }}>Deliverable · 02</div>
-                <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.5rem", margin: "2px 0 var(--space-4)" }}>
-                  PDF <span style={{ fontStyle: "italic" }}>document</span>
-                </div>
-                <p style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)", margin: "0 0 var(--space-4)" }}>
-                  A branded, standard-format proposal document. Preview it exactly as the client will see it, or save a PDF.
-                </p>
-                <div style={{ display: "flex", gap: "var(--space-3)" }}>
-                  <button
-                    type="button"
-                    onClick={openPreview}
-                    disabled={picked.length === 0}
-                    style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-border)", background: "var(--color-bg)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: picked.length ? "pointer" : "not-allowed" }}
-                  >
-                    Preview
-                  </button>
-                  <button
-                    type="button"
-                    onClick={downloadPdf}
-                    disabled={picked.length === 0 || downloadingPdf}
-                    style={{ padding: "var(--space-3) var(--space-5)", border: "1px solid var(--color-navy)", background: picked.length ? "var(--color-navy)" : "var(--color-surface)", color: picked.length ? "#fff" : "var(--color-text-muted)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: picked.length ? "pointer" : "not-allowed" }}
-                  >
-                    {downloadingPdf ? "Generating…" : "Download PDF"}
-                  </button>
-                </div>
               </div>
             </div>
 
@@ -1076,6 +1085,15 @@ export default function ProposalBuilderPage() {
                   </button>
                 </div>
               </div>
+              {/* Gmail's compose-via-URL can't attach a file — this is the
+                  one manual step standing between "drafted" and "actually
+                  has the PDF on it," so it's called out explicitly rather
+                  than assumed. */}
+              <p style={{ fontSize: "0.78rem", color: hasDownloadedPdf ? "var(--color-text-muted)" : "var(--color-accent)", marginTop: "var(--space-3)", marginBottom: 0 }}>
+                {hasDownloadedPdf
+                  ? "Reminder: Gmail can't attach the PDF for you — drag the file you downloaded above into the compose window before sending."
+                  : "Download the PDF above first, then drag it into the Gmail window before sending — Gmail can't attach it for you."}
+              </p>
             </div>
 
             {/* Preview = the exact PDF HTML in an iframe (one source of truth

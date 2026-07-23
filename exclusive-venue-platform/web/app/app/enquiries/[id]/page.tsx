@@ -16,6 +16,7 @@ import {
   type Proposal,
   type ShortlistResponse,
 } from "@/lib/api/types";
+import DeclineModal from "../DeclineModal";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -74,10 +75,15 @@ export default function EnquiryCommandCenterPage() {
   const [parsing, setParsing] = useState(false);
   const [savingBrief, setSavingBrief] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  const [showDecline, setShowDecline] = useState(false);
 
   const [shortlist, setShortlist] = useState<ShortlistResponse | null>(null);
   const [loadingShortlist, setLoadingShortlist] = useState(false);
   const [creatingProposal, setCreatingProposal] = useState(false);
+  // Proposal awareness (workflow overhaul) — this page could previously
+  // only ever *create* a new proposal, with no way to see one that already
+  // existed for the enquiry.
+  const [proposals, setProposals] = useState<Proposal[]>([]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -92,6 +98,8 @@ export default function EnquiryCommandCenterPage() {
         );
         setContact(contactData);
       }
+      const proposalData = await apiFetch<Proposal[]>(`/proposals?enquiry_id=${enquiryId}`);
+      setProposals(proposalData);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load enquiry");
     }
@@ -104,20 +112,16 @@ export default function EnquiryCommandCenterPage() {
   const latestBrief = briefs[0] ?? null;
 
   async function handleTransition(stage: EnquiryStage) {
+    if (stage === "lost") {
+      setShowDecline(true);
+      return;
+    }
     setTransitioning(true);
     setError(null);
     try {
-      let lostReason: string | null = null;
-      if (stage === "lost") {
-        lostReason = window.prompt("Reason the enquiry was lost:");
-        if (!lostReason) {
-          setTransitioning(false);
-          return;
-        }
-      }
       const updated = await apiFetch<Enquiry>(`/enquiries/${enquiryId}/transition`, {
         method: "POST",
-        body: JSON.stringify({ stage, lost_reason: lostReason }),
+        body: JSON.stringify({ stage, lost_reason: null }),
       });
       setEnquiry(updated);
     } catch (err) {
@@ -286,6 +290,18 @@ export default function EnquiryCommandCenterPage() {
         </p>
       )}
 
+      {showDecline && (
+        <DeclineModal
+          enquiryId={enquiryId}
+          headline={contact?.full_name ?? "Enquiry"}
+          onClose={() => setShowDecline(false)}
+          onDeclined={() => {
+            setShowDecline(false);
+            load();
+          }}
+        />
+      )}
+
       {notice && (
         <p style={{ color: "var(--color-warning)", marginTop: "var(--space-4)" }}>{notice}</p>
       )}
@@ -314,6 +330,38 @@ export default function EnquiryCommandCenterPage() {
           <p style={{ color: "var(--color-text-muted)" }}>No brief yet — parse the raw enquiry above.</p>
         )}
       </section>
+
+      {proposals.length > 0 && (
+        <section style={sectionStyle}>
+          <h2 style={{ marginTop: 0, fontSize: "1.05rem" }}>
+            Existing proposal{proposals.length > 1 ? "s" : ""}
+          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+            {proposals
+              .slice()
+              .sort((a, b) => b.version - a.version)
+              .map((p) => (
+                <Link
+                  key={p.id}
+                  href={`/app/proposals/${p.id}`}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "var(--space-3)",
+                    border: "1px solid var(--color-border)",
+                    color: "var(--color-text-primary)",
+                    textDecoration: "none",
+                  }}
+                >
+                  <span>
+                    {p.title} <span style={{ color: "var(--color-text-muted)" }}>· v{p.version}</span>
+                  </span>
+                  <span style={{ color: "var(--color-text-secondary)" }}>{p.status}</span>
+                </Link>
+              ))}
+          </div>
+        </section>
+      )}
 
       <section style={sectionStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

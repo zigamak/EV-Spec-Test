@@ -11,10 +11,23 @@ Production note: Render/any Linux host must run `playwright install chromium`
 browser.
 """
 
+import base64
 import html as _html
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from playwright.sync_api import sync_playwright
+
+_LOGO_PATH = Path(__file__).parent / "assets" / "logo-white.png"
+
+
+@lru_cache(maxsize=1)
+def _logo_data_uri() -> str:
+    """Base64 data URI for the brand logo — embedded inline so Chromium (run
+    headless in a subprocess, no guaranteed dev server) can always resolve it."""
+    data = _LOGO_PATH.read_bytes()
+    return f"data:image/png;base64,{base64.b64encode(data).decode()}"
 
 
 def _esc(value: Any) -> str:
@@ -139,9 +152,7 @@ def render_proposal_html(ctx: dict[str, Any]) -> str:
   /* cover */
   .cover {{ background:var(--navy); color:var(--cream); height:62vh; display:flex;
             flex-direction:column; justify-content:space-between; page-break-after:always; }}
-  .logo {{ width:40px; height:40px; border:1.5px solid var(--cream); border-radius:5px;
-           display:flex; align-items:center; justify-content:center; margin:0 auto; }}
-  .logo i {{ width:12px; height:12px; background:var(--cream); border-radius:2px; }}
+  .logo {{ width:40px; height:auto; margin:0 auto; display:block; }}
   .cover h1 {{ font-size:42px; line-height:1.15; color:#e0a3ad; }}
   .cover .prep {{ font-size:9px; letter-spacing:2.5px; text-transform:uppercase; opacity:.7; margin-top:16px; }}
   .cover .foot {{ display:flex; justify-content:space-between; font-size:8px; letter-spacing:1.5px;
@@ -230,7 +241,7 @@ def render_proposal_html(ctx: dict[str, Any]) -> str:
 </style></head>
 <body>
   <div class="cover" style="padding:60px 56px">
-    <div class="logo"><i></i></div>
+    <img class="logo" src="{_logo_data_uri()}" alt="Exclusive Venue" />
     <div>
       <h1>{_esc(ctx['event_title'])} — <em>{_esc(ctx['client_name'])}</em></h1>
       <div class="prep">Prepared for {_esc(ctx['client_name'])}{f" · {_esc(ctx['window_str'])}" if ctx.get('window_str') else ''} · by Exclusive Venue</div>

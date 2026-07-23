@@ -483,6 +483,7 @@ export type TimelineType =
   | "proposal_sent"
   | "proposal_won"
   | "proposal_declined"
+  | "enquiry_transitioned"
   | "activity";
 
 export type TimelineCategory = "system" | "email" | "proposal" | "event";

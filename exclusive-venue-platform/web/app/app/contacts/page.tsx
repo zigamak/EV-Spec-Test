@@ -450,7 +450,17 @@ const PILL_BUTTON_BASE: React.CSSProperties = {
   font: "inherit",
 };
 
-function ActionButtons({ email, phone, onEdit }: { email?: string | null; phone?: string | null; onEdit: () => void }) {
+function ActionButtons({
+  email,
+  phone,
+  enquiriesHref,
+  onEdit,
+}: {
+  email?: string | null;
+  phone?: string | null;
+  enquiriesHref?: string;
+  onEdit: () => void;
+}) {
   return (
     <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
       <a
@@ -477,6 +487,11 @@ function ActionButtons({ email, phone, onEdit }: { email?: string | null; phone?
       >
         ☎ Call
       </a>
+      {enquiriesHref && (
+        <Link href={enquiriesHref} style={{ ...PILL_BUTTON_BASE, border: "1px solid var(--color-border)", color: "var(--color-text-primary)" }}>
+          View enquiries →
+        </Link>
+      )}
       <button onClick={onEdit} style={{ ...PILL_BUTTON_BASE, border: "1px solid var(--color-border)", color: "var(--color-text-primary)", background: "transparent" }}>
         ✎ Edit
       </button>
@@ -515,6 +530,7 @@ const TIMELINE_ICON: Record<TimelineEntry["type"], { symbol: string; color: stri
   proposal_sent: { symbol: "✓", color: "var(--color-accent)" },
   proposal_won: { symbol: "◆", color: "var(--color-success)" },
   proposal_declined: { symbol: "✕", color: "var(--color-text-muted)" },
+  enquiry_transitioned: { symbol: "→", color: "var(--color-navy)" },
   activity: { symbol: "•", color: "var(--color-text-muted)" },
 };
 
@@ -853,6 +869,12 @@ function OrgDetail({
           <Link href="/app/enquiries" style={{ ...PILL_BUTTON_BASE, background: "var(--color-navy)", color: "#fff" }}>
             + New proposal
           </Link>
+          <Link
+            href={`/app/enquiries?org=${organisationId}`}
+            style={{ ...PILL_BUTTON_BASE, border: "1px solid var(--color-border)", color: "var(--color-text-primary)" }}
+          >
+            View enquiries →
+          </Link>
           <a
             href={primaryEmail ? `mailto:${primaryEmail}` : undefined}
             aria-disabled={!primaryEmail}
@@ -1166,7 +1188,14 @@ function ContactDetail({
         )}
       </div>
 
-      {!editing && <ActionButtons email={contact.email} phone={contact.phone} onEdit={() => { setEditing(true); setForm(contact); }} />}
+      {!editing && (
+        <ActionButtons
+          email={contact.email}
+          phone={contact.phone}
+          enquiriesHref={`/app/enquiries?contact=${contactId}`}
+          onEdit={() => { setEditing(true); setForm(contact); }}
+        />
+      )}
 
       {editing ? (
         <div style={{ marginTop: "var(--space-6)", display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: "480px" }}>

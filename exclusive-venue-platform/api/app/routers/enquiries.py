@@ -54,6 +54,25 @@ def _raise_for_postgrest(exc: APIError) -> None:
     raise HTTPException(status.HTTP_400_BAD_REQUEST, exc.message) from exc
 
 
+def _is_admin(client: Client, user_id: str) -> bool:
+    """Informational only — used for the auto-assign-on-create default and
+    the forwarded_to -> assigned_to resolution below, NOT for authorization.
+    RLS (migration 0022) is what actually enforces who can see/change what;
+    a wrong answer here just means a slightly wrong default, never a leak
+    (user_roles_select_own already lets any caller read their own rows)."""
+    try:
+        result = (
+            client.table("user_roles")
+            .select("role")
+            .eq("user_id", user_id)
+            .eq("role", "admin")
+            .execute()
+        )
+    except APIError:
+        return False
+    return bool(result.data)
+
+
 # --- organisations ---------------------------------------------------------
 
 
@@ -209,6 +228,13 @@ def create_enquiry(payload: EnquiryCreate, client: ScopedClient, staff: Staff):
         **payload.model_dump(mode="json", exclude_none=True),
         "created_by": staff.user_id,
     }
+    # Role-based access (workflow overhaul, migration 0022): a plain staff
+    # member manually logging an enquiry already owns it — auto-assign so
+    # they can see it back under enquiries_staff_select_own immediately.
+    # An admin's manual entry is left unassigned (goes to the shared pool)
+    # unless they explicitly pass assigned_to.
+    if "assigned_to" not in body and not _is_admin(client, staff.user_id):
+        body["assigned_to"] = staff.user_id
     try:
         result = client.table("enquiries").insert(body).execute()
     except APIError as exc:
@@ -236,6 +262,28 @@ def update_enquiry(enquiry_id: UUID, payload: EnquiryUpdate, client: ScopedClien
     body = payload.model_dump(mode="json", exclude_none=True)
     if not body:
         return _get_enquiry_or_404(client, enquiry_id)
+
+    # Role-based access (workflow overhaul, migration 0022) — forwarded_to
+    # is the display name shown everywhere in the UI; resolve it to the
+    # matching profile's auth id so assigned_to (what RLS's ownership
+    # clause actually checks) tracks it. A plain staff member's own UPDATE
+    # can't pass enquiries_staff_update_own's WITH CHECK if this changes
+    # assigned_to away from themselves, so in practice only an admin's
+    # forward can ever take effect — this is what makes that a real,
+    # DB-enforced boundary rather than just a UI convention.
+    if body.get("forwarded_to"):
+        try:
+            match = (
+                client.table("profiles")
+                .select("id")
+                .eq("full_name", body["forwarded_to"])
+                .execute()
+            )
+        except APIError as exc:
+            _raise_for_postgrest(exc)
+        if match.data:
+            body["assigned_to"] = match.data[0]["id"]
+
     try:
         result = client.table("enquiries").update(body).eq("id", str(enquiry_id)).execute()
     except APIError as exc:
@@ -290,7 +338,7 @@ class AssignmentRequest(BaseModel):
 
 @router.post("/enquiries/{enquiry_id}/transition", response_model=Enquiry)
 def transition_enquiry(
-    enquiry_id: UUID, payload: StageTransitionRequest, client: ScopedClient, _: Staff
+    enquiry_id: UUID, payload: StageTransitionRequest, client: ScopedClient, staff: Staff
 ):
     """Task H1's stage machine. The only sanctioned way to move an
     enquiry's stage — validated against ALLOWED_TRANSITIONS before ever
@@ -318,6 +366,27 @@ def transition_enquiry(
         _raise_for_postgrest(exc)
     if not result.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Enquiry not found")
+
+    # Audit (workflow overhaul) — stage moves are the most consequential
+    # change an enquiry ever goes through; previously unlogged, which meant
+    # the Contacts conversation timeline and this enquiry's own /activity
+    # feed had no record of enquiry->briefed->proposed->held->signed/lost.
+    log_activity(
+        client,
+        action="enquiry.transitioned",
+        actor_type="human",
+        actor_id=staff.user_id,
+        actor_label=staff.email,
+        entity_type="enquiry",
+        entity_id=str(enquiry_id),
+        enquiry_id=str(enquiry_id),
+        summary=(
+            f"Declined: {payload.lost_reason}"
+            if payload.stage == "lost"
+            else f"Moved to {payload.stage}"
+        ),
+        metadata={"from_stage": current["stage"], "to_stage": payload.stage, "lost_reason": payload.lost_reason},
+    )
     return result.data[0]
 
 

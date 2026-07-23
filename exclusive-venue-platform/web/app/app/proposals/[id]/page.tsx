@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import type { Proposal, ProposalLinkToken, ProposalVenue } from "@/lib/api/types";
+import DeclineModal from "../../enquiries/DeclineModal";
 
 const buttonStyle: React.CSSProperties = {
   padding: "var(--space-2) var(--space-4)",
@@ -57,6 +58,11 @@ export default function ProposalEditorPage() {
   const [savingIntro, setSavingIntro] = useState(false);
   const [generatingIntro, setGeneratingIntro] = useState(false);
   const [sending, setSending] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  // A declined proposal doesn't auto-move the enquiry to lost (see
+  // decline_proposal's docstring) — offered as a distinct follow-up.
+  const [offerEnquiryDecline, setOfferEnquiryDecline] = useState(false);
+  const [showEnquiryDecline, setShowEnquiryDecline] = useState(false);
   const [creatingLink, setCreatingLink] = useState(false);
 
   const load = useCallback(async () => {
@@ -179,6 +185,33 @@ export default function ProposalEditorPage() {
     }
   }
 
+  async function handleMarkWon() {
+    setUpdatingStatus(true);
+    setError(null);
+    try {
+      const updated = await apiFetch<Proposal>(`/proposals/${proposalId}/accept`, { method: "POST" });
+      setProposal(updated);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to mark proposal as won");
+    } finally {
+      setUpdatingStatus(false);
+    }
+  }
+
+  async function handleMarkDeclined() {
+    setUpdatingStatus(true);
+    setError(null);
+    try {
+      const updated = await apiFetch<Proposal>(`/proposals/${proposalId}/decline`, { method: "POST" });
+      setProposal(updated);
+      setOfferEnquiryDecline(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to mark proposal as declined");
+    } finally {
+      setUpdatingStatus(false);
+    }
+  }
+
   async function handleCreateLink() {
     setCreatingLink(true);
     setError(null);
@@ -243,6 +276,45 @@ export default function ProposalEditorPage() {
       {notice && <p style={{ color: "var(--color-warning)", marginTop: "var(--space-4)" }}>{notice}</p>}
       {error && <p style={{ color: "var(--color-danger)", marginTop: "var(--space-4)" }}>{error}</p>}
 
+      {offerEnquiryDecline && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "var(--space-3)",
+            marginTop: "var(--space-4)",
+            padding: "var(--space-3) var(--space-4)",
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+          }}
+        >
+          <span style={{ fontSize: "0.9rem", color: "var(--color-text-secondary)" }}>
+            Proposal declined — also mark the enquiry itself as lost?
+          </span>
+          <div style={{ display: "flex", gap: "var(--space-2)" }}>
+            <button style={buttonStyle} onClick={() => setShowEnquiryDecline(true)}>
+              Decline enquiry too →
+            </button>
+            <button style={buttonStyle} onClick={() => setOfferEnquiryDecline(false)}>
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showEnquiryDecline && (
+        <DeclineModal
+          enquiryId={proposal.enquiry_id}
+          headline={proposal.title}
+          onClose={() => setShowEnquiryDecline(false)}
+          onDeclined={() => {
+            setShowEnquiryDecline(false);
+            setOfferEnquiryDecline(false);
+          }}
+        />
+      )}
+
       <section style={sectionStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Intro copy</h2>
@@ -272,9 +344,25 @@ export default function ProposalEditorPage() {
       <section style={sectionStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Send &amp; share</h2>
-          <button style={primaryButtonStyle} disabled={sending || proposal.status === "sent"} onClick={handleSend}>
-            {sending ? "Sending…" : proposal.status === "sent" ? "Sent" : "Mark as sent"}
-          </button>
+          <div style={{ display: "flex", gap: "var(--space-2)" }}>
+            <button style={primaryButtonStyle} disabled={sending || proposal.status === "sent"} onClick={handleSend}>
+              {sending ? "Sending…" : proposal.status === "sent" ? "Sent" : "Mark as sent"}
+            </button>
+            <button
+              style={proposal.status === "accepted" ? { ...buttonStyle, borderColor: "var(--color-success)", color: "var(--color-success)" } : buttonStyle}
+              disabled={updatingStatus || proposal.status === "accepted"}
+              onClick={handleMarkWon}
+            >
+              {proposal.status === "accepted" ? "Won" : "Mark won"}
+            </button>
+            <button
+              style={proposal.status === "declined" ? { ...buttonStyle, borderColor: "var(--color-danger)", color: "var(--color-danger)" } : buttonStyle}
+              disabled={updatingStatus || proposal.status === "declined"}
+              onClick={handleMarkDeclined}
+            >
+              {proposal.status === "declined" ? "Declined" : "Mark declined"}
+            </button>
+          </div>
         </div>
 
         <div style={{ marginTop: "var(--space-4)" }}>

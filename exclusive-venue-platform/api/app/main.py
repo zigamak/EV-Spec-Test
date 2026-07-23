@@ -21,6 +21,7 @@ from app.routers import (
     proposals,
     public_proposals,
     recommendations,
+    staff,
     venue_media,
     venue_profile,
     venues,
@@ -68,6 +69,7 @@ app.include_router(recommendations.router)
 app.include_router(proposals.router)
 app.include_router(public_proposals.router)
 app.include_router(webhooks.router)
+app.include_router(staff.router)
 
 
 @app.get("/health")

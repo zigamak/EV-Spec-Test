@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useMe } from "@/lib/useMe";
 
 /**
  * Sidebar structure follows the Operator Console design brief (WORKSPACE /
@@ -66,6 +67,7 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const showNav = pathname !== "/app/login";
   const [email, setEmail] = useState<string | null>(null);
+  const me = useMe();
 
   useEffect(() => {
     if (!showNav) return;
@@ -241,9 +243,11 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
             </span>
             <div style={{ overflow: "hidden" }}>
               <div style={{ fontSize: "0.85rem", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-                {email}
+                {me?.full_name ?? email}
               </div>
-              <div style={{ fontSize: "0.75rem", color: "var(--color-navy-text-muted)" }}>Staff</div>
+              <div style={{ fontSize: "0.75rem", color: "var(--color-navy-text-muted)" }}>
+                {me?.role === "admin" ? "Admin" : "Staff"}
+              </div>
             </div>
           </div>
         )}

@@ -35,6 +35,7 @@ from app.services.copy_generator import (
 )
 from app.services.proposal_links import default_expiry, generate_token
 from app.services.proposal_pdf import proposal_pdf_bytes, render_proposal_html
+from app.services.stage_machine import InvalidTransition, validate_transition
 
 router = APIRouter(tags=["proposals"])
 
@@ -133,7 +134,7 @@ def update_proposal(proposal_id: UUID, payload: ProposalUpdate, client: ScopedCl
 
 
 @router.post("/proposals/{proposal_id}/send", response_model=Proposal)
-def send_proposal(proposal_id: UUID, client: ScopedClient, _: Staff):
+def send_proposal(proposal_id: UUID, client: ScopedClient, staff: Staff):
     from datetime import datetime
 
     body = {"status": "sent", "sent_at": datetime.now(UTC).isoformat()}
@@ -143,7 +144,119 @@ def send_proposal(proposal_id: UUID, client: ScopedClient, _: Staff):
         _raise_for_postgrest(exc)
     if not result.data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Proposal not found")
-    return result.data[0]
+    proposal = result.data[0]
+
+    # Workflow overhaul — sending a proposal previously never touched the
+    # parent enquiry's stage at all, so it sat in Enquiry/Briefed (the
+    # inbox's "Open" bucket) forever regardless of proposal activity. Only
+    # auto-advance from a stage the graph actually allows moving to
+    # "proposed" from (briefed, or held — a lapsed hold getting a fresh
+    # proposal); an unbriefed enquiry or one already at proposed/held/
+    # signed/lost is left alone rather than forcing an invalid or
+    # backwards jump. This is what moves it out of "Open" into "Awaiting"
+    # in the Inbox (status is computed from stage, per stage_machine.py).
+    enquiry_id = proposal.get("enquiry_id")
+    if enquiry_id:
+        try:
+            enquiry_result = (
+                client.table("enquiries").select("stage").eq("id", enquiry_id).execute()
+            )
+        except APIError as exc:
+            _raise_for_postgrest(exc)
+        current_stage = enquiry_result.data[0]["stage"] if enquiry_result.data else None
+        if current_stage:
+            try:
+                validate_transition(current_stage, "proposed")
+            except InvalidTransition:
+                pass
+            else:
+                try:
+                    client.table("enquiries").update({"stage": "proposed"}).eq(
+                        "id", enquiry_id
+                    ).execute()
+                except APIError as exc:
+                    _raise_for_postgrest(exc)
+                log_activity(
+                    client,
+                    action="enquiry.transitioned",
+                    actor_type="human",
+                    actor_id=staff.user_id,
+                    actor_label=staff.email,
+                    entity_type="enquiry",
+                    entity_id=enquiry_id,
+                    enquiry_id=enquiry_id,
+                    summary="Moved to proposed",
+                    metadata={"from_stage": current_stage, "to_stage": "proposed", "reason": "proposal.sent"},
+                )
+
+    log_activity(
+        client,
+        action="proposal.sent",
+        actor_type="human",
+        actor_id=staff.user_id,
+        actor_label=staff.email,
+        entity_type="proposal",
+        entity_id=proposal["id"],
+        enquiry_id=proposal.get("enquiry_id"),
+        summary=f"Sent proposal “{proposal['title']}”",
+    )
+    return proposal
+
+
+@router.post("/proposals/{proposal_id}/accept", response_model=Proposal)
+def accept_proposal(proposal_id: UUID, client: ScopedClient, staff: Staff):
+    """Workflow overhaul — the Proposals list's Accepted filter chip had no
+    way to ever populate; this and /decline below are the two missing
+    actions. A proposal accept is deliberately independent of the parent
+    enquiry's stage (see /decline's docstring) — set both explicitly if a
+    win should also move the enquiry to "signed"."""
+    try:
+        result = client.table("proposals").update({"status": "accepted"}).eq("id", str(proposal_id)).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Proposal not found")
+    proposal = result.data[0]
+    log_activity(
+        client,
+        action="proposal.accepted",
+        actor_type="human",
+        actor_id=staff.user_id,
+        actor_label=staff.email,
+        entity_type="proposal",
+        entity_id=proposal["id"],
+        enquiry_id=proposal.get("enquiry_id"),
+        summary=f"Won proposal “{proposal['title']}”",
+    )
+    return proposal
+
+
+@router.post("/proposals/{proposal_id}/decline", response_model=Proposal)
+def decline_proposal(proposal_id: UUID, client: ScopedClient, staff: Staff):
+    """See accept_proposal above — declining a proposal does NOT itself
+    move the parent enquiry to "lost". Those are two related but distinct
+    actions (a proposal can be declined and revised into a new one without
+    the enquiry ever being lost); the web UI offers moving the enquiry to
+    lost as a separate, explicit follow-up via POST /enquiries/{id}/transition."""
+    try:
+        result = client.table("proposals").update({"status": "declined"}).eq("id", str(proposal_id)).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Proposal not found")
+    proposal = result.data[0]
+    log_activity(
+        client,
+        action="proposal.declined",
+        actor_type="human",
+        actor_id=staff.user_id,
+        actor_label=staff.email,
+        entity_type="proposal",
+        entity_id=proposal["id"],
+        enquiry_id=proposal.get("enquiry_id"),
+        summary=f"Declined proposal “{proposal['title']}”",
+    )
+    return proposal
 
 
 @router.post("/proposals/{proposal_id}/generate-intro-copy", response_model=Proposal)
@@ -263,7 +376,7 @@ def generate_proposal_personal_email(proposal_id: UUID, client: ScopedClient, _:
     event_date = proposal.get("event_date") or brief.get("date_window_start")
     try:
         email_copy = generate_personal_email(
-            contact_name, organisation_name, brief.get("event_type"), event_date, venue_names, None
+            contact_name, organisation_name, brief.get("event_type"), event_date, venue_names
         )
     except LLMUnavailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc

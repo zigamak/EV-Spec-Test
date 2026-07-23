@@ -2,21 +2,15 @@
 
 import { useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
-import { avatarColorForId } from "@/lib/utils";
-import { TEAM, WHOLE_TEAM } from "@/lib/team";
+import { OWNER_COLOR, TEAM, WHOLE_TEAM, initialsFromName } from "@/lib/team";
 
 /** "Forward to" hand-off (task H5) — routes an enquiry to a team member and
  * records an optional note. Writes enquiries.forwarded_to + forward_note via
- * PATCH; see migration 0009 for why this is separate from assigned_to. */
-
-function initials(name: string): string {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? "")
-    .join("");
-}
+ * PATCH; see migration 0009 for why this is separate from assigned_to.
+ *
+ * Uses the same OWNER_COLOR/initialsFromName as the Pipeline board and
+ * Calendar (lib/team.ts) so a given salesperson renders in the same color
+ * everywhere in the app, instead of a separate hashed color just here. */
 
 export default function ForwardToModal({
   enquiryId,
@@ -125,7 +119,7 @@ export default function ForwardToModal({
                     height: "42px",
                     borderRadius: "50%",
                     flexShrink: 0,
-                    background: o.whole ? "transparent" : avatarColorForId(o.name),
+                    background: o.whole ? "transparent" : OWNER_COLOR[o.name] ?? "var(--color-text-muted)",
                     border: o.whole ? "1px solid var(--color-border)" : "none",
                     color: o.whole ? "var(--color-text-secondary)" : "#fff",
                     display: "flex",
@@ -136,7 +130,7 @@ export default function ForwardToModal({
                     letterSpacing: o.whole ? "0.05em" : 0,
                   }}
                 >
-                  {o.whole ? "ALL" : initials(o.name)}
+                  {o.whole ? "ALL" : initialsFromName(o.name)}
                 </span>
                 <span style={{ flex: 1 }}>
                   <span style={{ fontFamily: "var(--font-serif)", fontSize: "1.2rem" }}>

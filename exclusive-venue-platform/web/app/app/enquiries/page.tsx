@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import {
   type Brief,
@@ -12,7 +13,15 @@ import {
   type OrganisationTier,
 } from "@/lib/api/types";
 import { relativeTime } from "@/lib/utils";
+import { OWNER_COLOR, WHOLE_TEAM, initialsFromName, useStaffDirectory } from "@/lib/team";
+import { useMe } from "@/lib/useMe";
 import ForwardToModal from "./ForwardToModal";
+import DeclineModal from "./DeclineModal";
+
+// Intake/triage pool sentinel — distinct from WHOLE_TEAM (no filter) and any
+// real name. Mirrors the Pipeline board's owner filter exactly (web/app/app/
+// page.tsx) so "who owns this" behaves and reads identically on both pages.
+const UNASSIGNED = "__unassigned__";
 
 /**
  * Inquiries — the inbox (task C5), the three-column operator layout from the
@@ -32,6 +41,7 @@ const TABS: { key: StatusTab; label: string }[] = [
   { key: "open", label: "Open" },
   { key: "awaiting", label: "Awaiting" },
   { key: "won", label: "Won" },
+  { key: "lost", label: "Lost" },
   { key: "all", label: "All" },
 ];
 
@@ -119,58 +129,98 @@ interface Row {
 }
 
 export default function InquiriesInboxPage() {
+  // Cross-page linking (workflow overhaul) — Contacts can deep-link here
+  // pre-filtered to one organisation or contact (?org=/?contact=), e.g.
+  // "View enquiries →" on an org/contact page.
+  const searchParams = useSearchParams();
+  const orgFilterParam = searchParams.get("org");
+  const contactFilterParam = searchParams.get("contact");
+
+  // Role-based access (workflow overhaul) — same rationale as the Pipeline
+  // board: RLS already scopes a plain staff member to their own rows, so
+  // the salesperson pills and Forward-to action only render for admins.
+  const me = useMe();
+  const isAdmin = me?.role === "admin";
+  const TEAM = useStaffDirectory();
+
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<StatusTab>("open");
-  const [assign, setAssign] = useState<"all" | "unassigned" | "assigned">("all");
+  const [tab, setTab] = useState<StatusTab>(orgFilterParam || contactFilterParam ? "all" : "open");
+  // Per-salesperson filter — All (WHOLE_TEAM) / Unassigned / a named TEAM
+  // member, exactly the model the Pipeline board already uses (web/app/app/
+  // page.tsx), so filtering by "who owns this" behaves identically here.
+  const [ownerFilter, setOwnerFilter] = useState<string>(WHOLE_TEAM);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      apiFetch<EnquiryWithBriefs[]>("/enquiries"),
-      apiFetch<Contact[]>("/contacts"),
-      apiFetch<Organisation[]>("/organisations"),
-    ])
-      .then(([enquiries, contacts, orgs]) => {
-        if (cancelled) return;
-        const contactsById = new Map(contacts.map((c) => [c.id, c]));
-        const orgsById = new Map(orgs.map((o) => [o.id, o]));
-        const built = enquiries.map((enquiry) => {
-          const brief = [...enquiry.briefs].sort((a, b) => b.version - a.version)[0] ?? null;
-          const contact = enquiry.contact_id ? contactsById.get(enquiry.contact_id) ?? null : null;
-          const org = contact?.organisation_id ? orgsById.get(contact.organisation_id) ?? null : null;
-          const title = org?.name ?? contact?.full_name ?? "Untitled enquiry";
-          return { enquiry, brief, contact, org, title };
-        });
-        setRows(built);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : "Failed to load inquiries");
+  const load = useCallback(async () => {
+    try {
+      const [enquiries, contacts, orgs] = await Promise.all([
+        apiFetch<EnquiryWithBriefs[]>("/enquiries"),
+        apiFetch<Contact[]>("/contacts"),
+        apiFetch<Organisation[]>("/organisations"),
+      ]);
+      const contactsById = new Map(contacts.map((c) => [c.id, c]));
+      const orgsById = new Map(orgs.map((o) => [o.id, o]));
+      const built = enquiries.map((enquiry) => {
+        const brief = [...enquiry.briefs].sort((a, b) => b.version - a.version)[0] ?? null;
+        const contact = enquiry.contact_id ? contactsById.get(enquiry.contact_id) ?? null : null;
+        const org = contact?.organisation_id ? orgsById.get(contact.organisation_id) ?? null : null;
+        const title = org?.name ?? contact?.full_name ?? "Untitled enquiry";
+        return { enquiry, brief, contact, org, title };
       });
-    return () => {
-      cancelled = true;
-    };
+      setRows(built);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to load inquiries");
+    }
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Deep-link scope from Contacts (?org=/?contact=) — applied before
+  // anything else, since it's a hard cross-page scope, not a toggle-able
+  // pill the way status/owner filters are.
+  const scopedRows = useMemo(() => {
+    if (!rows) return [];
+    if (orgFilterParam) return rows.filter((r) => r.org?.id === orgFilterParam);
+    if (contactFilterParam) return rows.filter((r) => r.contact?.id === contactFilterParam);
+    return rows;
+  }, [rows, orgFilterParam, contactFilterParam]);
 
   const counts = useMemo(() => {
     const c: Record<StatusTab, number> = { open: 0, awaiting: 0, won: 0, lost: 0, all: 0 };
-    for (const r of rows ?? []) {
+    for (const r of scopedRows) {
       c.all += 1;
       c[r.enquiry.status] += 1;
     }
     return c;
-  }, [rows]);
+  }, [scopedRows]);
+
+  // Salesperson pill counts — respect the current status tab (like Pipeline)
+  // but not the owner filter itself, so the pill row's own counts stay
+  // stable while you click between salespeople.
+  const tabFilteredRows = useMemo(
+    () => scopedRows.filter((r) => tab === "all" || r.enquiry.status === tab),
+    [scopedRows, tab],
+  );
+  const ownerCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of tabFilteredRows) {
+      const key = r.enquiry.forwarded_to || UNASSIGNED;
+      c[key] = (c[key] ?? 0) + 1;
+    }
+    return c;
+  }, [tabFilteredRows]);
 
   const visible = useMemo(() => {
-    const list = (rows ?? []).filter((r) => {
-      if (tab !== "all" && r.enquiry.status !== tab) return false;
-      if (assign === "unassigned" && r.enquiry.forwarded_to) return false;
-      if (assign === "assigned" && !r.enquiry.forwarded_to) return false;
+    const list = tabFilteredRows.filter((r) => {
+      if (ownerFilter === UNASSIGNED) return !r.enquiry.forwarded_to;
+      if (ownerFilter !== WHOLE_TEAM) return r.enquiry.forwarded_to === ownerFilter;
       return true;
     });
     return list.sort((a, b) => (a.enquiry.updated_at < b.enquiry.updated_at ? 1 : -1));
-  }, [rows, tab, assign]);
+  }, [tabFilteredRows, ownerFilter]);
 
   const selected = useMemo(
     () => visible.find((r) => r.enquiry.id === selectedId) ?? visible[0] ?? null,
@@ -204,6 +254,29 @@ export default function InquiriesInboxPage() {
             Inbox
           </h1>
 
+          {(orgFilterParam || contactFilterParam) && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--space-2)",
+                marginBottom: "var(--space-4)",
+                fontSize: "0.8rem",
+                color: "var(--color-text-secondary)",
+              }}
+            >
+              Filtered to{" "}
+              <strong style={{ color: "var(--color-text-primary)" }}>
+                {orgFilterParam
+                  ? rows?.find((r) => r.org?.id === orgFilterParam)?.org?.name ?? "this organisation"
+                  : rows?.find((r) => r.contact?.id === contactFilterParam)?.contact?.full_name ?? "this contact"}
+              </strong>
+              <Link href="/app/enquiries" style={{ color: "var(--color-accent)" }}>
+                Clear
+              </Link>
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: "var(--space-5)", borderBottom: "1px solid var(--color-border)" }}>
             {TABS.map((t) => {
               const active = t.key === tab;
@@ -234,19 +307,72 @@ export default function InquiriesInboxPage() {
             })}
           </div>
 
-          <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
-            {(["all", "unassigned", "assigned"] as const).map((a) => {
-              const active = assign === a;
+          {/* Admin sees/filters by everyone; a plain staff member only
+              ever gets their own rows back from the API (RLS, migration
+              0022), so there's nothing for pills to filter — say so
+              instead of showing empty-looking pills. */}
+          {me && !isAdmin && (
+            <div style={{ marginTop: "var(--space-3)", fontSize: "0.8rem", color: "var(--color-text-secondary)" }}>
+              Showing <strong style={{ color: "var(--color-text-primary)" }}>my enquiries</strong>
+            </div>
+          )}
+
+          {isAdmin && (
+          <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)", alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              onClick={() => setOwnerFilter(WHOLE_TEAM)}
+              style={{
+                padding: "2px var(--space-3)",
+                borderRadius: "var(--radius-pill)",
+                border: ownerFilter === WHOLE_TEAM ? "1px solid var(--color-navy)" : "1px solid var(--color-border)",
+                background: ownerFilter === WHOLE_TEAM ? "var(--color-surface)" : "var(--color-bg)",
+                cursor: "pointer",
+                fontSize: "0.68rem",
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                fontWeight: ownerFilter === WHOLE_TEAM ? 700 : 500,
+                color: "var(--color-text-secondary)",
+              }}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setOwnerFilter((current) => (current === UNASSIGNED ? WHOLE_TEAM : UNASSIGNED))}
+              title="Enquiries with no owner yet — the intake pool"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--space-1)",
+                padding: "2px var(--space-3)",
+                borderRadius: "var(--radius-pill)",
+                border: ownerFilter === UNASSIGNED ? "1px solid var(--color-accent)" : "1px dashed var(--color-border)",
+                background: ownerFilter === UNASSIGNED ? "var(--color-surface)" : "var(--color-bg)",
+                cursor: "pointer",
+                fontSize: "0.68rem",
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                fontWeight: ownerFilter === UNASSIGNED ? 700 : 500,
+                color: "var(--color-text-secondary)",
+              }}
+            >
+              Unassigned <span style={{ color: "var(--color-text-muted)" }}>{ownerCounts[UNASSIGNED] ?? 0}</span>
+            </button>
+            {TEAM.map((member) => {
+              const active = ownerFilter === member.name;
+              const color = OWNER_COLOR[member.name] ?? "var(--color-text-secondary)";
+              const count = ownerCounts[member.name] ?? 0;
               return (
                 <button
-                  key={a}
-                  onClick={() => setAssign(a)}
+                  key={member.name}
+                  onClick={() => setOwnerFilter((current) => (current === member.name ? WHOLE_TEAM : member.name))}
+                  title={`${member.name} · ${member.role}`}
                   style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "var(--space-1)",
                     padding: "2px var(--space-3)",
                     borderRadius: "var(--radius-pill)",
-                    border: active
-                      ? `1px solid ${a === "unassigned" ? "var(--color-accent)" : "var(--color-navy)"}`
-                      : "1px solid var(--color-border)",
+                    border: active ? `1px solid ${color}` : "1px solid var(--color-border)",
                     background: active ? "var(--color-surface)" : "var(--color-bg)",
                     cursor: "pointer",
                     fontSize: "0.68rem",
@@ -256,11 +382,30 @@ export default function InquiriesInboxPage() {
                     color: "var(--color-text-secondary)",
                   }}
                 >
-                  {a}
+                  <span
+                    style={{
+                      width: "14px",
+                      height: "14px",
+                      borderRadius: "50%",
+                      background: color,
+                      color: "#fff",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "0.55rem",
+                      fontWeight: 700,
+                      textTransform: "none",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {initialsFromName(member.name)}
+                  </span>
+                  {member.name} <span style={{ color: "var(--color-text-muted)" }}>{count}</span>
                 </button>
               );
             })}
           </div>
+          )}
         </div>
 
         <div style={{ overflowY: "auto", flex: 1 }}>
@@ -354,7 +499,10 @@ export default function InquiriesInboxPage() {
       {/* Right — the detail panel */}
       <section style={{ flex: 1, overflowY: "auto", background: "var(--color-surface)", minWidth: 0 }}>
         {selected ? (
-          <DetailPanel row={selected} />
+          // key = enquiry id: force a remount when a different row is
+          // selected, so DetailPanel's own local state (forwardedTo, modal
+          // visibility) doesn't leak between different enquiries.
+          <DetailPanel key={selected.enquiry.id} row={selected} onUpdated={load} isAdmin={isAdmin} />
         ) : (
           rows !== null && (
             <div
@@ -375,12 +523,22 @@ export default function InquiriesInboxPage() {
   );
 }
 
-function DetailPanel({ row }: { row: Row }) {
+function DetailPanel({
+  row,
+  onUpdated,
+  isAdmin,
+}: {
+  row: Row;
+  onUpdated: () => void;
+  isAdmin: boolean;
+}) {
   const { enquiry, brief, contact, org } = row;
   const window = formatWindow(brief);
   const budget = budgetLine(brief);
   const [showForward, setShowForward] = useState(false);
+  const [showDecline, setShowDecline] = useState(false);
   const [forwardedTo, setForwardedTo] = useState<string | null>(enquiry.forwarded_to);
+  const declined = enquiry.stage === "lost";
 
   const metaParts = [
     contact?.full_name,
@@ -441,29 +599,58 @@ function DetailPanel({ row }: { row: Row }) {
         </p>
       )}
 
-      <div style={{ display: "flex", gap: "var(--space-3)", margin: "var(--space-6) 0 var(--space-8)" }}>
-        <button type="button" style={secondaryBtn}>
-          Decline politely
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowForward(true)}
-          style={forwardedTo ? { ...secondaryBtn, borderColor: "var(--color-accent)", color: "var(--color-accent)" } : secondaryBtn}
-        >
-          {forwardedTo ? `Forwarded · ${forwardedTo}` : "Forward to →"}
-        </button>
-        <Link
-          href={`/app/proposals/new?enquiry=${enquiry.id}`}
+      {declined ? (
+        <div
           style={{
-            ...secondaryBtn,
-            background: "var(--color-accent)",
-            color: "#fff",
-            border: "1px solid var(--color-accent)",
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-2)",
+            margin: "var(--space-6) 0 var(--space-8)",
+            padding: "var(--space-3) var(--space-4)",
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-danger)",
+            color: "var(--color-danger)",
+            fontSize: "0.85rem",
+            fontWeight: 600,
           }}
         >
-          Build proposal →
-        </Link>
-      </div>
+          Declined{enquiry.lost_reason ? `: ${enquiry.lost_reason}` : ""}
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: "var(--space-3)", margin: "var(--space-6) 0 var(--space-8)" }}>
+          <button type="button" onClick={() => setShowDecline(true)} style={secondaryBtn}>
+            Decline politely
+          </button>
+          {/* Reassignment is admin-only (RLS, migration 0022 — a staff
+              member's own UPDATE can't change assigned_to away from
+              themselves anyway). A non-admin just sees who it's with,
+              read-only; if it's already theirs there's nothing to show. */}
+          {isAdmin ? (
+            <button
+              type="button"
+              onClick={() => setShowForward(true)}
+              style={forwardedTo ? { ...secondaryBtn, borderColor: "var(--color-accent)", color: "var(--color-accent)" } : secondaryBtn}
+            >
+              {forwardedTo ? `Forwarded · ${forwardedTo}` : "Forward to →"}
+            </button>
+          ) : (
+            forwardedTo && (
+              <span style={{ ...secondaryBtn, cursor: "default" }}>Forwarded · {forwardedTo}</span>
+            )
+          )}
+          <Link
+            href={`/app/proposals/new?enquiry=${enquiry.id}`}
+            style={{
+              ...secondaryBtn,
+              background: "var(--color-accent)",
+              color: "#fff",
+              border: "1px solid var(--color-accent)",
+            }}
+          >
+            Build proposal →
+          </Link>
+        </div>
+      )}
 
       <div style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", padding: "var(--space-6)" }}>
         <div style={{ fontFamily: "var(--font-serif)", fontSize: "1.3rem" }}>
@@ -497,6 +684,20 @@ function DetailPanel({ row }: { row: Row }) {
           onForwarded={(name) => {
             setForwardedTo(name);
             setShowForward(false);
+            onUpdated();
+          }}
+        />
+      )}
+
+      {showDecline && (
+        <DeclineModal
+          enquiryId={enquiry.id}
+          headline={brief?.event_type ?? "Enquiry"}
+          subtitle={[org?.name, contact?.full_name, brief?.guest_count ? `${brief.guest_count} pax` : null].filter(Boolean).join(" · ")}
+          onClose={() => setShowDecline(false)}
+          onDeclined={() => {
+            setShowDecline(false);
+            onUpdated();
           }}
         />
       )}

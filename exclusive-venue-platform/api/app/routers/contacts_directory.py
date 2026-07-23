@@ -197,7 +197,7 @@ def get_contact_summary(contact_id: UUID, client: ScopedClient, _: Staff):
 # --- Conversation timeline ---------------------------------------------
 
 TimelineType = Literal[
-    "onboarded", "enquiry_received", "brief_parsed", "proposal_sent", "proposal_won", "proposal_declined", "activity"  # noqa: E501
+    "onboarded", "enquiry_received", "brief_parsed", "proposal_sent", "proposal_won", "proposal_declined", "enquiry_transitioned", "activity"  # noqa: E501
 ]
 TimelineCategory = Literal["system", "email", "proposal", "event"]
 
@@ -397,7 +397,7 @@ def _organisation_timeline(client: Client, org: dict, contacts: list[dict]) -> l
                 client.table("activity_log")
                 .select("*")
                 .in_("enquiry_id", enquiry_ids)
-                .not_.in_("action", ["brief.parsed", "proposal.created"])
+                .not_.in_("action", ["brief.parsed", "proposal.created", "enquiry.transitioned"])
                 .execute()
             )
         except APIError as exc:
@@ -412,6 +412,36 @@ def _organisation_timeline(client: Client, org: dict, contacts: list[dict]) -> l
                     label=a["action"].replace(".", " · ").replace("_", " "),
                     title=a.get("summary") or a["action"],
                     enquiry_id=a.get("enquiry_id"),
+                )
+            )
+
+        # Enquiry stage transitions get their own entry type (rather than
+        # the generic "activity" bucket above) so "moved to Proposed" /
+        # "Declined: budget mismatch" reads naturally in the timeline —
+        # workflow overhaul: transition_enquiry() now logs these.
+        try:
+            transitions = (
+                client.table("activity_log")
+                .select("*")
+                .in_("enquiry_id", enquiry_ids)
+                .eq("action", "enquiry.transitioned")
+                .execute()
+            )
+        except APIError as exc:
+            _raise_for_postgrest(exc)
+        for t in transitions.data:
+            meta = t.get("metadata") or {}
+            to_stage = meta.get("to_stage")
+            declined = to_stage == "lost"
+            entries.append(
+                TimelineEntry(
+                    id=f"transition-{t['id']}",
+                    type="enquiry_transitioned",
+                    category="event",
+                    timestamp=t["created_at"],
+                    label="Enquiry · declined" if declined else "Enquiry · stage change",
+                    title=t.get("summary") or (f"Moved to {to_stage}" if to_stage else "Stage changed"),
+                    enquiry_id=t.get("enquiry_id"),
                 )
             )
 

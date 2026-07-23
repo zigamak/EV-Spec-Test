@@ -13,10 +13,13 @@ import {
   type EnquiryStage,
   type EnquiryStatus,
   type EnquiryWithBriefs,
+  type Proposal,
 } from "@/lib/api/types";
 import { daysSince, daysUntil } from "@/lib/utils";
-import { OWNER_COLOR, TEAM, WHOLE_TEAM, initialsFromName } from "@/lib/team";
+import { OWNER_COLOR, WHOLE_TEAM, initialsFromName, useStaffDirectory } from "@/lib/team";
+import { useMe } from "@/lib/useMe";
 import NewEnquiryModal from "./NewEnquiryModal";
+import DeclineModal from "./enquiries/DeclineModal";
 
 interface BoardCard {
   enquiry: EnquiryWithBriefs;
@@ -35,6 +38,18 @@ const STAGE_ACCENT: Record<EnquiryStage, string> = {
   held: "var(--color-warning)",
   signed: "var(--color-success)",
   lost: "var(--color-text-muted)",
+};
+
+// Proposal-awareness badge (workflow overhaul) — cards previously gave zero
+// indication of whether a proposal already existed for an enquiry. Labels
+// mirror ProposalStatus (lib/api/types.ts) but read as a state, not a verb.
+const PROPOSAL_BADGE: Record<string, { label: string; bg: string; color: string }> = {
+  draft: { label: "Proposal drafted", bg: "var(--color-surface)", color: "var(--color-text-secondary)" },
+  pending_approval: { label: "Proposal pending", bg: "var(--color-surface)", color: "var(--color-text-secondary)" },
+  sent: { label: "Proposal sent", bg: "var(--color-navy)", color: "#fff" },
+  viewed: { label: "Proposal viewed", bg: "var(--color-brass)", color: "#fff" },
+  accepted: { label: "Proposal won", bg: "var(--color-success)", color: "#fff" },
+  declined: { label: "Proposal declined", bg: "var(--color-text-muted)", color: "#fff" },
 };
 
 // Mirrors api/app/services/stage_machine.py's ALLOWED_TRANSITIONS — used
@@ -175,7 +190,18 @@ function WarningIcon() {
 export default function PipelineBoardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Role-based access (workflow overhaul) — RLS (migration 0022) already
+  // guarantees a non-admin only ever gets their own enquiries back; `me`
+  // just decides whether to render the salesperson pills/reassign controls
+  // at all, since they'd have nothing to filter for a plain staff member.
+  const me = useMe();
+  const isAdmin = me?.role === "admin";
+  const TEAM = useStaffDirectory();
   const [cards, setCards] = useState<BoardCard[] | null>(null);
+  // Latest proposal per enquiry (workflow overhaul) — a cheap client-side
+  // join, same pattern as the Inquiries inbox joining contacts/orgs. Lets a
+  // card show real proposal progress instead of no signal at all.
+  const [proposalByEnquiry, setProposalByEnquiry] = useState<Record<string, Proposal>>({});
   const [error, setError] = useState<string | null>(null);
   const [showNewEnquiry, setShowNewEnquiry] = useState(false);
   const [search, setSearch] = useState("");
@@ -197,6 +223,10 @@ export default function PipelineBoardPage() {
   // interaction on the one card in flight rather than the whole board.
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<EnquiryStage | "lost" | null>(null);
+  // Pending decline — set when a card is dropped on "Lost", opens the
+  // shared DeclineModal (same one used by the Inquiries inbox) rather than
+  // a raw window.prompt.
+  const [declineCardId, setDeclineCardId] = useState<string | null>(null);
   const [transitioningId, setTransitioningId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const suppressClickRef = useRef(false);
@@ -204,12 +234,22 @@ export default function PipelineBoardPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const enquiries = await apiFetch<EnquiryWithBriefs[]>("/enquiries");
+      const [enquiries, proposals] = await Promise.all([
+        apiFetch<EnquiryWithBriefs[]>("/enquiries"),
+        apiFetch<Proposal[]>("/proposals"),
+      ]);
       const withBriefs = enquiries.map((enquiry) => ({
         enquiry,
         brief: [...enquiry.briefs].sort((a, b) => b.version - a.version)[0] ?? null,
       }));
       setCards(withBriefs);
+
+      const latestByEnquiry: Record<string, Proposal> = {};
+      for (const p of proposals) {
+        const existing = latestByEnquiry[p.enquiry_id];
+        if (!existing || p.version > existing.version) latestByEnquiry[p.enquiry_id] = p;
+      }
+      setProposalByEnquiry(latestByEnquiry);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load pipeline");
     }
@@ -286,9 +326,9 @@ export default function PipelineBoardPage() {
         return;
       }
       if (target === "lost") {
-        const reason = window.prompt("Reason for marking this enquiry lost:");
-        if (!reason) return;
-        runTransition(id, "lost", reason);
+        // Opens the shared DeclineModal instead of transitioning straight
+        // away — it does the POST /transition itself on submit.
+        setDeclineCardId(id);
         return;
       }
       runTransition(id, target);
@@ -488,7 +528,17 @@ export default function PipelineBoardPage() {
         </div>
       )}
 
-      {cards !== null && (
+      {/* Admin sees/filters by everyone (RLS returns every row for them
+          anyway); a plain staff member only ever gets their own rows back
+          from the API, so the pill row has nothing to filter — a plain
+          label says so instead of showing empty-looking pills. */}
+      {cards !== null && me && !isAdmin && (
+        <div style={{ marginTop: "var(--space-3)", fontSize: "0.8rem", color: "var(--color-text-secondary)" }}>
+          Showing <strong style={{ color: "var(--color-text-primary)" }}>my enquiries</strong>
+        </div>
+      )}
+
+      {cards !== null && isAdmin && (
         <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-3)", alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginRight: "2px" }}>
             Salesperson
@@ -777,6 +827,7 @@ export default function PipelineBoardPage() {
                     const eventSoon =
                       daysToEvent !== null && daysToEvent <= EVENT_SOON_DAYS && stage !== "held" && stage !== "signed";
                     const isTransitioning = transitioningId === enquiry.id;
+                    const proposal = proposalByEnquiry[enquiry.id];
                     return (
                       <div
                         key={enquiry.id}
@@ -855,34 +906,45 @@ export default function PipelineBoardPage() {
                             stopPropagation on both events: pointerdown so
                             opening/using the dropdown never starts a card
                             drag, click so picking an option never
-                            navigates into the enquiry. */}
-                        <select
-                          value={enquiry.forwarded_to ?? ""}
-                          draggable={false}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            reassign(enquiry.id, e.target.value || null);
-                          }}
-                          style={{
-                            marginTop: "2px",
-                            fontSize: "0.75rem",
-                            color: "var(--color-text-secondary)",
-                            background: "transparent",
-                            border: "none",
-                            padding: 0,
-                            cursor: "pointer",
-                            maxWidth: "100%",
-                          }}
-                        >
-                          <option value="">Unassigned</option>
-                          {TEAM.map((member) => (
-                            <option key={member.name} value={member.name}>
-                              {member.name}
-                            </option>
-                          ))}
-                        </select>
+                            navigates into the enquiry. Admin-only: a plain
+                            staff member's own row is already assigned to
+                            them (that's the only reason they can see it),
+                            and RLS (migration 0022) would reject their own
+                            UPDATE if it tried to change assigned_to anyway
+                            — so for them this renders as plain text. */}
+                        {isAdmin ? (
+                          <select
+                            value={enquiry.forwarded_to ?? ""}
+                            draggable={false}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              reassign(enquiry.id, e.target.value || null);
+                            }}
+                            style={{
+                              marginTop: "2px",
+                              fontSize: "0.75rem",
+                              color: "var(--color-text-secondary)",
+                              background: "transparent",
+                              border: "none",
+                              padding: 0,
+                              cursor: "pointer",
+                              maxWidth: "100%",
+                            }}
+                          >
+                            <option value="">Unassigned</option>
+                            {TEAM.map((member) => (
+                              <option key={member.name} value={member.name}>
+                                {member.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div style={{ marginTop: "2px", fontSize: "0.75rem", color: "var(--color-text-secondary)" }}>
+                            {enquiry.forwarded_to ?? "Unassigned"}
+                          </div>
+                        )}
 
                         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-3)", flexWrap: "wrap" }}>
                           <span
@@ -938,6 +1000,28 @@ export default function PipelineBoardPage() {
                                 ? "Event passed"
                                 : `Event in ${daysToEvent}d`}
                             </span>
+                          )}
+                          {proposal && (
+                            <Link
+                              href={`/app/proposals/${proposal.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              title="Open this enquiry's proposal"
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                padding: "2px var(--space-2)",
+                                borderRadius: "var(--radius-pill)",
+                                background: PROPOSAL_BADGE[proposal.status]?.bg ?? "var(--color-surface)",
+                                fontSize: "0.68rem",
+                                fontWeight: 600,
+                                color: PROPOSAL_BADGE[proposal.status]?.color ?? "var(--color-text-secondary)",
+                                textDecoration: "none",
+                              }}
+                            >
+                              {PROPOSAL_BADGE[proposal.status]?.label ?? "Proposal"}
+                            </Link>
                           )}
                         </div>
 
@@ -1015,6 +1099,18 @@ export default function PipelineBoardPage() {
           onClose={() => setShowNewEnquiry(false)}
           onCreated={() => {
             setShowNewEnquiry(false);
+            load();
+          }}
+        />
+      )}
+
+      {declineCardId && (
+        <DeclineModal
+          enquiryId={declineCardId}
+          headline={cards?.find((c) => c.enquiry.id === declineCardId)?.brief?.event_type ?? "Enquiry"}
+          onClose={() => setDeclineCardId(null)}
+          onDeclined={() => {
+            setDeclineCardId(null);
             load();
           }}
         />

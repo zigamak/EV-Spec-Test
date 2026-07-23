@@ -71,12 +71,18 @@ def generate_personal_email(
     event_type: str | None,
     event_date: str | None,
     venue_names: list[str],
-    proposal_link: str | None,
 ) -> str:
     """The personal note that accompanies a sent proposal (task G7) — lands
     in the editable `personal_email_copy` column, a separate artifact from
     the proposal's own intro_copy. Same non-authoritative stance: a draft a
-    human reviews and freely rewrites before anything is sent."""
+    human reviews and freely rewrites before anything is sent.
+
+    Deliberately PDF-attachment framing, not a share-link mention: "Open in
+    Gmail" (web/app/app/proposals/new/page.tsx) opens a mailto-style compose
+    URL, which has no attachment parameter — there was never really a link
+    in this note's body, so the copy shouldn't claim there is one. The
+    actual PDF still has to be attached by hand (Download PDF, then drag it
+    into the open Gmail window) since no URL scheme can do that for you."""
     first_name = contact_name.split()[0] if contact_name else "there"
     venue_clause = (
         f"the {len(venue_names)} options — {', '.join(venue_names)}"
@@ -95,11 +101,7 @@ def generate_personal_email(
             + venue_clause
             + (f" for the {event_type}" if event_type else "")
             + ", each suited to the format and feeling they described, with fully transparent pricing.",
-            (
-                f"- Mention the full proposal is here: {proposal_link}"
-                if proposal_link
-                else "- Mention the full proposal is included (web link inline and the PDF attached)."
-            ),
+            "- Mention that the full proposal is attached as a PDF.",
             (
                 f"- Offer a soft hold on {event_date} if they'd like."
                 if event_date
