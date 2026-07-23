@@ -3,19 +3,30 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
-import { OWNER_COLOR, TEAM, WHOLE_TEAM } from "@/lib/team";
+import { OWNER_COLOR, WHOLE_TEAM, useStaffDirectory } from "@/lib/team";
 import type { EnquiryWithBriefs, VenueAvailability, VenueWithAvailability } from "@/lib/api/types";
 import { toIsoDate } from "@/lib/utils";
 
-// Only two categories ever render here: signed enquiries (a contract is
-// executed) and booked venue-availability windows (the venue itself is
-// confirmed for those dates). Every other enquiry stage (enquiry/briefed/
-// proposed/held/lost) and every other availability reason (hold/
-// maintenance/landlord_blocked/other) is deliberately excluded — this is
-// a bookings calendar, not a pipeline view (that's /app which already
-// covers the earlier stages).
+// Three categories: signed enquiries (contract executed), unconfirmed
+// enquiries (a proposal is out — proposed/held stage — the date is
+// provisionally spoken for but the client hasn't agreed yet), and booked
+// venue-availability windows (the venue itself is confirmed). Team-wide
+// visibility for all three (client ask, 23 Jul) — deliberately NOT scoped
+// to "my enquiries" the way the Pipeline board/Inbox are: once a date is
+// even provisionally spoken for, the whole team needs to see it to avoid
+// double-booking a venue, which is exactly why GET /calendar/enquiries
+// (api/app/routers/enquiries.py) reads across every salesperson's rows
+// rather than the per-owner /enquiries endpoint. Early-stage enquiry/
+// briefed rows and lost deals still aren't shown here — this is a
+// bookings calendar, not a pipeline view (that's /app for those).
 const SIGNED_COLOR = "var(--color-accent)";
 const BOOKED_COLOR = "var(--color-navy)";
+// "Lined navy" — a diagonal hatch so unconfirmed reads as provisional at
+// a glance even before you read the label, without introducing a new hue.
+// Two navy tones (not navy+white) so the white event text stays legible
+// against either stripe rather than fighting a light stripe for contrast.
+const UNCONFIRMED_STRIPE =
+  "repeating-linear-gradient(45deg, var(--color-navy) 0px, var(--color-navy) 5px, var(--color-navy-hover) 5px, var(--color-navy-hover) 10px)";
 
 // OWNER_COLOR for the owner filter/avatars now comes from lib/team.ts —
 // shared with the Pipeline board so a salesperson renders in the same
@@ -25,11 +36,12 @@ interface BookedWindow extends VenueAvailability {
   venue_name: string;
 }
 
-interface SignedEvent {
+interface EnquiryEvent {
   enquiry: EnquiryWithBriefs;
   brief: EnquiryWithBriefs["briefs"][number];
   startsOn: string;
   endsOn: string;
+  confirmed: boolean; // true = signed, false = proposal out but not yet agreed
 }
 
 const MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" });
@@ -45,13 +57,15 @@ function initials(name: string): string {
     .join("");
 }
 
-/** Bookings calendar (task J2) — month view of confirmed business only:
- * signed enquiries + booked venue windows. Redesigned 19 Jul toward the
- * "Calendar · bookings" reference (Monday-first week, owner filter by
- * real forwarded_to names, two-category legend with real counts). No
- * fabricated total value in the summary bar — quote_total lives on
- * proposal_venues, one join too many for this pass; counts only, and
- * only of what's actually confirmed. */
+/** Bookings calendar (task J2) — month view of real scheduling facts:
+ * signed enquiries, proposed/held enquiries ("unconfirmed" — a proposal is
+ * out but not yet agreed), and booked venue windows. Redesigned 19 Jul
+ * toward the "Calendar · bookings" reference (Monday-first week, owner
+ * filter by real forwarded_to names), extended 23 Jul to be team-wide
+ * (client ask) — the owner pills are a pure filter here, not an access
+ * boundary the way the Pipeline board's are. No fabricated total value in
+ * the summary bar — quote_total lives on proposal_venues, one join too
+ * many for this pass; counts only, and only of what's real. */
 export default function PortfolioCalendarPage() {
   const [windows, setWindows] = useState<BookedWindow[] | null>(null);
   const [enquiries, setEnquiries] = useState<EnquiryWithBriefs[]>([]);
@@ -62,6 +76,7 @@ export default function PortfolioCalendarPage() {
   });
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [owner, setOwner] = useState<string>(WHOLE_TEAM);
+  const TEAM = useStaffDirectory();
 
   const load = useCallback(async () => {
     setError(null);
@@ -74,7 +89,10 @@ export default function PortfolioCalendarPage() {
             .map((a) => ({ ...a, venue_name: venue.name })),
         ),
       );
-      setEnquiries(await apiFetch<EnquiryWithBriefs[]>("/enquiries"));
+      // Team-wide, unlike the Pipeline board/Inbox's /enquiries — see the
+      // endpoint's own docstring for why this one deliberately reads
+      // across every salesperson's rows.
+      setEnquiries(await apiFetch<EnquiryWithBriefs[]>("/calendar/enquiries"));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load calendar");
     }
@@ -84,9 +102,8 @@ export default function PortfolioCalendarPage() {
     load();
   }, [load]);
 
-  const signedEvents = useMemo<SignedEvent[]>(() => {
+  const calendarEvents = useMemo<EnquiryEvent[]>(() => {
     return enquiries
-      .filter((enquiry) => enquiry.stage === "signed")
       .map((enquiry) => ({
         enquiry,
         brief: [...enquiry.briefs].sort((a, b) => b.version - a.version)[0],
@@ -97,13 +114,16 @@ export default function PortfolioCalendarPage() {
         brief,
         startsOn: brief.date_window_start!,
         endsOn: brief.date_window_end ?? brief.date_window_start!,
+        confirmed: enquiry.stage === "signed",
       }));
   }, [enquiries]);
 
   const visibleEvents = useMemo(
-    () => (owner === WHOLE_TEAM ? signedEvents : signedEvents.filter((e) => e.enquiry.forwarded_to === owner)),
-    [signedEvents, owner],
+    () => (owner === WHOLE_TEAM ? calendarEvents : calendarEvents.filter((e) => e.enquiry.forwarded_to === owner)),
+    [calendarEvents, owner],
   );
+  const signedCount = useMemo(() => visibleEvents.filter((e) => e.confirmed).length, [visibleEvents]);
+  const unconfirmedCount = useMemo(() => visibleEvents.filter((e) => !e.confirmed).length, [visibleEvents]);
 
   const todayIso = toIsoDate(new Date());
 
@@ -138,12 +158,11 @@ export default function PortfolioCalendarPage() {
     return windows!.filter((w) => iso >= w.starts_on && iso <= w.ends_on);
   }
 
-  function eventsOn(day: Date): SignedEvent[] {
+  function eventsOn(day: Date): EnquiryEvent[] {
     const iso = toIsoDate(day);
     return visibleEvents.filter((e) => iso >= e.startsOn && iso <= e.endsOn);
   }
 
-  const totalSigned = visibleEvents.length;
   const totalBooked = windows.length;
   const selectedDayWindows = selectedDay ? windowsOn(selectedDay) : [];
   const selectedDayEvents = selectedDay ? eventsOn(selectedDay) : [];
@@ -217,10 +236,12 @@ export default function PortfolioCalendarPage() {
       >
         <div style={{ display: "flex", gap: "var(--space-6)" }}>
           <LegendItem color={SIGNED_COLOR} label="Signed" hint="Contract executed" />
+          <LegendItem background={UNCONFIRMED_STRIPE} label="Unconfirmed" hint="Proposal sent, awaiting the client" />
           <LegendItem color={BOOKED_COLOR} label="Booked" hint="Venue confirmed for these dates" />
         </div>
         <div style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", color: "var(--color-text-muted)", fontSize: "0.9rem" }}>
-          {totalSigned + totalBooked} event{totalSigned + totalBooked === 1 ? "" : "s"} · {totalSigned} signed · {totalBooked} booked
+          {signedCount + unconfirmedCount + totalBooked} event{signedCount + unconfirmedCount + totalBooked === 1 ? "" : "s"} ·{" "}
+          {signedCount} signed · {unconfirmedCount} unconfirmed · {totalBooked} booked
         </div>
       </div>
 
@@ -291,12 +312,12 @@ export default function PortfolioCalendarPage() {
                     item.kind === "event" ? (
                       <div
                         key={item.e.enquiry.id}
-                        title={`${item.e.brief.event_type ?? "Untitled"} · ${item.e.enquiry.forwarded_to ?? "Unassigned"}`}
+                        title={`${item.e.brief.event_type ?? "Untitled"} · ${item.e.enquiry.forwarded_to ?? "Unassigned"} · ${item.e.confirmed ? "Signed" : "Unconfirmed"}`}
                         style={{
                           marginTop: "3px",
                           padding: "2px 6px",
                           borderRadius: "3px",
-                          background: SIGNED_COLOR,
+                          background: item.e.confirmed ? SIGNED_COLOR : UNCONFIRMED_STRIPE,
                           color: "#fff",
                           fontWeight: 600,
                           overflow: "hidden",
@@ -348,13 +369,19 @@ export default function PortfolioCalendarPage() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
                 {selectedDayEvents.length === 0 && selectedDayWindows.length === 0 && (
-                  <p style={{ color: "var(--color-text-muted)", fontSize: "0.9rem" }}>Nothing confirmed on this date.</p>
+                  <p style={{ color: "var(--color-text-muted)", fontSize: "0.9rem" }}>Nothing on this date.</p>
                 )}
-                {selectedDayEvents.map(({ enquiry, brief }) => (
-                  <Link key={enquiry.id} href={`/app/enquiries/${enquiry.id}`} style={eventCardStyle}>
+                {selectedDayEvents.map(({ enquiry, brief, confirmed }) => (
+                  <Link
+                    key={enquiry.id}
+                    href={`/app/enquiries/${enquiry.id}`}
+                    style={confirmed ? eventCardStyle : { ...eventCardStyle, borderLeft: "3px solid var(--color-navy)" }}
+                  >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <span style={{ fontWeight: 600 }}>{brief.event_type ?? "Untitled enquiry"}</span>
-                      <span style={{ color: SIGNED_COLOR, fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase" }}>Signed</span>
+                      <span style={{ color: confirmed ? SIGNED_COLOR : "var(--color-navy)", fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase" }}>
+                        {confirmed ? "Signed" : "Unconfirmed"}
+                      </span>
                     </div>
                     <div style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)", marginTop: "var(--space-1)" }}>
                       {brief.date_window_start}
@@ -408,15 +435,21 @@ export default function PortfolioCalendarPage() {
                   const upcomingEvents = visibleEvents.filter((e) => e.startsOn >= todayIso).sort((a, b) => (a.startsOn < b.startsOn ? -1 : 1));
                   const upcomingWindows = windows.filter((w) => w.ends_on >= todayIso).sort((a, b) => (a.starts_on < b.starts_on ? -1 : 1));
                   if (upcomingEvents.length === 0 && upcomingWindows.length === 0) {
-                    return <p style={{ color: "var(--color-text-muted)", fontSize: "0.9rem" }}>Nothing confirmed yet.</p>;
+                    return <p style={{ color: "var(--color-text-muted)", fontSize: "0.9rem" }}>Nothing scheduled yet.</p>;
                   }
                   return (
                     <>
-                      {upcomingEvents.map(({ enquiry, brief }) => (
-                        <Link key={enquiry.id} href={`/app/enquiries/${enquiry.id}`} style={eventCardStyle}>
+                      {upcomingEvents.map(({ enquiry, brief, confirmed }) => (
+                        <Link
+                          key={enquiry.id}
+                          href={`/app/enquiries/${enquiry.id}`}
+                          style={confirmed ? eventCardStyle : { ...eventCardStyle, borderLeft: "3px solid var(--color-navy)" }}
+                        >
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                             <span style={{ fontWeight: 600 }}>{brief.event_type ?? "Untitled enquiry"}</span>
-                            <span style={{ color: SIGNED_COLOR, fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase" }}>Signed</span>
+                            <span style={{ color: confirmed ? SIGNED_COLOR : "var(--color-navy)", fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase" }}>
+                              {confirmed ? "Signed" : "Unconfirmed"}
+                            </span>
                           </div>
                           <div style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)", marginTop: "var(--space-1)" }}>
                             {brief.date_window_start}
@@ -471,10 +504,20 @@ function OwnerPill({ label, active, color, onClick }: { label: string; active: b
   );
 }
 
-function LegendItem({ color, label, hint }: { color: string; label: string; hint: string }) {
+function LegendItem({
+  color,
+  background,
+  label,
+  hint,
+}: {
+  color?: string;
+  background?: string;
+  label: string;
+  hint: string;
+}) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-      <span style={{ width: "10px", height: "10px", borderRadius: "3px", background: color, display: "inline-block", flexShrink: 0 }} />
+      <span style={{ width: "10px", height: "10px", borderRadius: "3px", background: background ?? color, display: "inline-block", flexShrink: 0 }} />
       <span>
         <strong style={{ fontSize: "0.85rem" }}>{label}</strong>
         <span style={{ color: "var(--color-text-muted)", fontSize: "0.8rem" }}> — {hint}</span>

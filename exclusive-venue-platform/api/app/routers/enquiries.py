@@ -15,6 +15,7 @@ from postgrest.exceptions import APIError
 from pydantic import BaseModel
 from supabase import Client
 
+from app.core.admin_client import get_admin_client
 from app.core.auth import StaffUser, require_staff_session
 from app.core.scoped_client import get_scoped_client
 from app.schemas.activity import ActivityLog
@@ -214,6 +215,34 @@ def list_enquiries(
         query = query.eq("assigned_to", str(assigned_to))
     try:
         result = query.execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return result.data
+
+
+@router.get("/calendar/enquiries", response_model=list[EnquiryWithBriefs])
+def list_calendar_enquiries(_: Staff):
+    """Team-wide bookings calendar (client ask, 23 Jul) — deliberately NOT
+    scoped by the per-salesperson RLS ownership policy (migration 0022)
+    that governs the Pipeline board and Inquiries inbox. Once a deal has a
+    proposal out (proposed/held — a date that's provisionally spoken for)
+    or is signed, its date is a scheduling fact the whole team needs to
+    avoid double-booking a venue, not a private lead — early-stage
+    enquiry/briefed rows and lost deals stay exactly as private as
+    everywhere else, this endpoint just doesn't return them.
+
+    Uses the admin client on purpose (app/core/admin_client.py) as a
+    narrow, reviewed exception to read across every salesperson's rows —
+    still gated behind a real staff session, same as every other route."""
+    try:
+        result = (
+            get_admin_client()
+            .table("enquiries")
+            .select("*, briefs(*)")
+            .in_("stage", ["proposed", "held", "signed"])
+            .order("created_at", desc=True)
+            .execute()
+        )
     except APIError as exc:
         _raise_for_postgrest(exc)
     return result.data
