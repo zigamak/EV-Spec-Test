@@ -20,6 +20,7 @@ from app.core.llm import LLMCallError, LLMUnavailableError
 from app.core.scoped_client import get_scoped_client
 from app.schemas.proposal import (
     Proposal,
+    ProposalAnalytics,
     ProposalCreate,
     ProposalLinkToken,
     ProposalUpdate,
@@ -117,6 +118,33 @@ def create_proposal(payload: ProposalCreate, client: ScopedClient, staff: Staff)
 @router.get("/proposals/{proposal_id}", response_model=Proposal)
 def get_proposal(proposal_id: UUID, client: ScopedClient, _: Staff):
     return _get_proposal_or_404(client, proposal_id)
+
+
+@router.get("/proposals/{proposal_id}/analytics", response_model=ProposalAnalytics)
+def get_proposal_analytics(proposal_id: UUID, client: ScopedClient, _: Staff):
+    """RLS (migration 0023) scopes this to the caller's own proposals for
+    staff, everything for admin — same as the enquiries ownership model."""
+    try:
+        events = (
+            client.table("proposal_analytics_events")
+            .select("event_type, venue_id, created_at")
+            .eq("proposal_id", str(proposal_id))
+            .order("created_at")
+            .execute()
+            .data
+        )
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+
+    opens = [e for e in events if e["event_type"] == "open"]
+    venues_seen = {e["venue_id"] for e in events if e["event_type"] == "venue_seen" and e["venue_id"]}
+
+    return ProposalAnalytics(
+        open_count=len(opens),
+        first_viewed_at=opens[0]["created_at"] if opens else None,
+        last_viewed_at=opens[-1]["created_at"] if opens else None,
+        venues_seen=list(venues_seen),
+    )
 
 
 @router.patch("/proposals/{proposal_id}", response_model=Proposal)

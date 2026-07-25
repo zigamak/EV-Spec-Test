@@ -16,6 +16,7 @@ from app.core.logging_config import configure_logging
 from app.routers import (
     briefs,
     contacts_directory,
+    dashboard,
     enquiries,
     pricing,
     proposals,
@@ -70,6 +71,7 @@ app.include_router(proposals.router)
 app.include_router(public_proposals.router)
 app.include_router(webhooks.router)
 app.include_router(staff.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/health")

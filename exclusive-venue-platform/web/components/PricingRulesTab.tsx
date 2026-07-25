@@ -28,9 +28,10 @@ const smallButtonStyle: React.CSSProperties = {
 
 const ADDON_TYPES: AddonPricingType[] = ["flat", "per_head", "per_hour"];
 
-/** Pricing rules editor (task F4) — lives as a tab within the Venue edit
- * page (B4), never its own route. Keeps the jsonb tier/adjustment shapes
- * simple for staff entry: one flat per-head rate, three common
+/** Pricing rules editor (task F4) — the rule/add-on/quote-tester UI for one
+ * venue. Shared between the Venue edit page's "Pricing rules" section and
+ * the standalone /app/pricing-rules picker. Keeps the jsonb tier/adjustment
+ * shapes simple for staff entry: one flat per-head rate, three common
  * day-of-week surcharge days, one date-range season surcharge — matches
  * what F2's calculator (app/services/pricing_engine.py) actually reads. */
 export default function PricingRulesTab({ venueId }: { venueId: string }) {

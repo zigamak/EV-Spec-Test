@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
-import type { Proposal, ProposalLinkToken, ProposalVenue } from "@/lib/api/types";
+import type { Proposal, ProposalAnalytics, ProposalLinkToken, ProposalVenue } from "@/lib/api/types";
 import DeclineModal from "../../enquiries/DeclineModal";
 import PageLoader from "@/components/PageLoader";
 
@@ -52,6 +52,7 @@ export default function ProposalEditorPage() {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [venues, setVenues] = useState<ProposalVenue[]>([]);
   const [links, setLinks] = useState<ProposalLinkToken[]>([]);
+  const [analytics, setAnalytics] = useState<ProposalAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -76,6 +77,8 @@ export default function ProposalEditorPage() {
       setVenues(venueData);
       const linkData = await apiFetch<ProposalLinkToken[]>(`/proposals/${proposalId}/links`);
       setLinks(linkData);
+      const analyticsData = await apiFetch<ProposalAnalytics>(`/proposals/${proposalId}/analytics`);
+      setAnalytics(analyticsData);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load proposal");
     }
@@ -338,13 +341,32 @@ export default function ProposalEditorPage() {
         {venues.length === 0 ? (
           <p style={{ color: "var(--color-text-muted)" }}>No venues in this proposal yet.</p>
         ) : (
-          venues.map((pv) => <ProposalVenueCard key={pv.id} proposalVenue={pv} onGenerateCopy={handleGenerateVenueCopy} onSaveCopy={handleSaveVenueCopy} onRemove={handleRemoveVenue} onToggleRecommended={handleToggleRecommended} />)
+          venues.map((pv) => (
+            <ProposalVenueCard
+              key={pv.id}
+              proposalVenue={pv}
+              seen={analytics?.venues_seen.includes(pv.venue_id) ?? false}
+              onGenerateCopy={handleGenerateVenueCopy}
+              onSaveCopy={handleSaveVenueCopy}
+              onRemove={handleRemoveVenue}
+              onToggleRecommended={handleToggleRecommended}
+            />
+          ))
         )}
       </section>
 
       <section style={sectionStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Send &amp; share</h2>
+          <div>
+            <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Send &amp; share</h2>
+            {analytics && (
+              <p style={{ margin: "var(--space-1) 0 0", fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                {analytics.open_count === 0
+                  ? "Not opened yet."
+                  : `Opened ${analytics.open_count} time${analytics.open_count === 1 ? "" : "s"} · last viewed ${new Date(analytics.last_viewed_at!).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`}
+              </p>
+            )}
+          </div>
           <div style={{ display: "flex", gap: "var(--space-2)" }}>
             <button style={primaryButtonStyle} disabled={sending || proposal.status === "sent"} onClick={handleSend}>
               {sending ? "Sending…" : proposal.status === "sent" ? "Sent" : "Mark as sent"}
@@ -403,12 +425,14 @@ export default function ProposalEditorPage() {
 
 function ProposalVenueCard({
   proposalVenue,
+  seen,
   onGenerateCopy,
   onSaveCopy,
   onRemove,
   onToggleRecommended,
 }: {
   proposalVenue: ProposalVenue;
+  seen: boolean;
   onGenerateCopy: (id: string) => Promise<void>;
   onSaveCopy: (id: string, copy: string) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
@@ -442,6 +466,10 @@ function ProposalVenueCard({
           <Link href={`/app/venues/${proposalVenue.venue_id}`} style={{ color: "var(--color-accent)", fontWeight: 600 }}>
             View venue
           </Link>
+          {" · "}
+          <span style={{ fontSize: "0.8rem", color: seen ? "var(--color-success)" : "var(--color-text-muted)" }}>
+            {seen ? "Seen by client" : "Not yet seen"}
+          </span>
           <div style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)" }}>
             HK${proposalVenue.quote_total.toLocaleString()}
           </div>

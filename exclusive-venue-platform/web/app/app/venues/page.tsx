@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
+import PageLoader from "@/components/PageLoader";
 import {
   VENUE_CATEGORIES,
   VENUE_CATEGORY_LABEL,
@@ -130,13 +131,17 @@ export default function VenueLibraryPage() {
           <h1 style={{ margin: 0, fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "2.25rem" }}>
             The <em style={{ color: "var(--color-accent)" }}>portfolio</em>
           </h1>
-          <p style={{ color: "var(--color-text-secondary)", marginTop: "var(--space-2)" }}>
-            {venues === null
-              ? "Loading…"
-              : `${venues.length} venue${venues.length === 1 ? "" : "s"}${
-                  districtCount ? ` across ${districtCount} district${districtCount === 1 ? "" : "s"}` : ""
-                }. Add to any proposal in one click.`}
-          </p>
+          {venues === null ? (
+            <div style={{ marginTop: "var(--space-2)" }}>
+              <PageLoader label="Loading venues" inline />
+            </div>
+          ) : (
+            <p style={{ color: "var(--color-text-secondary)", marginTop: "var(--space-2)" }}>
+              {`${venues.length} venue${venues.length === 1 ? "" : "s"}${
+                districtCount ? ` across ${districtCount} district${districtCount === 1 ? "" : "s"}` : ""
+              }. Add to any proposal in one click.`}
+            </p>
+          )}
         </div>
         <Link
           href="/app/venues/new"

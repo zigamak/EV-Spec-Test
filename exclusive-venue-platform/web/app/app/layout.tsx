@@ -28,7 +28,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: "Workspace",
     items: [
-      { label: "Dashboard" },
+      { label: "Dashboard", href: "/app/dashboard" },
       {
         label: "Inquiries",
         href: "/app/enquiries",
@@ -44,7 +44,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: "Inventory",
     items: [
       { label: "Venues", href: "/app/venues" },
-      { label: "Pricing rules" },
+      { label: "Pricing rules", href: "/app/pricing-rules" },
     ],
   },
 ];

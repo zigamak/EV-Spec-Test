@@ -820,3 +820,100 @@ export interface PublicProposal {
   status: string;
   venues: PublicProposalVenue[];
 }
+
+export interface ProposalAnalytics {
+  open_count: number;
+  first_viewed_at: string | null;
+  last_viewed_at: string | null;
+  venues_seen: string[];
+}
+
+// Dashboard summary (GET /dashboard) — mirrors app/schemas/dashboard.py.
+// Admin-only sections (revenue_trend, leaderboard, venue_performance)
+// come back as empty arrays for staff — the backend skips the underlying
+// query for them rather than the frontend merely hiding it.
+export interface DashboardKpis {
+  open_count: number;
+  awaiting_count: number;
+  won_this_month: number;
+  lost_this_month: number;
+  win_rate_pct: number | null;
+  pipeline_value: number;
+  currency: string;
+  total_enquiries: number;
+  total_lost: number;
+}
+
+export interface FunnelStage {
+  stage: string;
+  label: string;
+  count: number;
+}
+
+export interface ChannelCount {
+  channel: string;
+  count: number;
+}
+
+export interface UpcomingBooking {
+  proposal_id: string;
+  title: string;
+  venue_name: string;
+  event_date: string;
+}
+
+export interface RevenueMonth {
+  month: string;
+  revenue: number;
+}
+
+export interface LeaderboardRow {
+  staff_name: string;
+  won_count: number;
+  revenue: number;
+}
+
+export interface VenuePerformanceRow {
+  venue_name: string;
+  booking_count: number;
+  revenue: number;
+}
+
+export interface LostReasonCount {
+  reason: string;
+  count: number;
+}
+
+export interface AgingDeal {
+  enquiry_id: string;
+  summary: string;
+  stage: string;
+  days_stuck: number;
+  assigned_to_name: string | null;
+}
+
+export interface ProposalStatusCount {
+  status: string;
+  count: number;
+}
+
+export interface WorkloadRow {
+  staff_name: string;
+  open_count: number;
+  awaiting_count: number;
+}
+
+export interface DashboardSummary {
+  role: "admin" | "staff";
+  kpis: DashboardKpis;
+  funnel: FunnelStage[];
+  channel_breakdown: ChannelCount[];
+  upcoming_bookings: UpcomingBooking[];
+  lost_reasons: LostReasonCount[];
+  aging_deals: AgingDeal[];
+  proposal_funnel: ProposalStatusCount[];
+  revenue_trend: RevenueMonth[];
+  leaderboard: LeaderboardRow[];
+  venue_performance: VenuePerformanceRow[];
+  workload: WorkloadRow[];
+}

@@ -123,3 +123,21 @@ class PublicProposal(BaseModel):
     currency: str
     status: ProposalStatus
     venues: list[PublicProposalVenue]
+
+
+ProposalEventType = Literal["open", "venue_seen"]
+
+
+class ProposalEventCreate(BaseModel):
+    """Posted by the public, unauthenticated link page. `venue_id` is
+    required for 'venue_seen' and ignored for 'open'."""
+
+    event_type: ProposalEventType
+    venue_id: UUID | None = None
+
+
+class ProposalAnalytics(BaseModel):
+    open_count: int
+    first_viewed_at: datetime | None
+    last_viewed_at: datetime | None
+    venues_seen: list[UUID]

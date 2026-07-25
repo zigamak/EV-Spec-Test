@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import type { PublicProposal } from "@/lib/api/types";
 import PageLoader from "@/components/PageLoader";
@@ -19,6 +19,23 @@ export default function PublicProposalPage() {
   const token = params.token;
   const [proposal, setProposal] = useState<PublicProposal | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const seenVenues = useRef(new Set<string>());
+  const hasLoggedOpen = useRef(false);
+
+  // Fire-and-forget analytics — never blocks or breaks the client's view
+  // of their own proposal if this fails (network hiccup, ad blocker,
+  // whatever). keepalive lets the 'open' ping survive a fast unload.
+  const logEvent = useCallback(
+    (eventType: "open" | "venue_seen", venueId?: string) => {
+      fetch(`${API_URL}/public/proposals/${token}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({ event_type: eventType, venue_id: venueId ?? null }),
+      }).catch(() => {});
+    },
+    [token],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -36,6 +53,33 @@ export default function PublicProposalPage() {
       cancelled = true;
     };
   }, [token]);
+
+  useEffect(() => {
+    if (!proposal || hasLoggedOpen.current) return;
+    hasLoggedOpen.current = true;
+    logEvent("open");
+  }, [proposal, logEvent]);
+
+  // One IntersectionObserver, one entry per venue card — fires
+  // 'venue_seen' the first time each option actually scrolls into view
+  // (not just "was in the response"), deduped per page load.
+  const observeVenueCard = useCallback(
+    (venueId: string) => (node: HTMLDivElement | null) => {
+      if (!node) return;
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          if (entry?.isIntersecting && !seenVenues.current.has(venueId)) {
+            seenVenues.current.add(venueId);
+            logEvent("venue_seen", venueId);
+            observer.disconnect();
+          }
+        },
+        { threshold: 0.5 },
+      );
+      observer.observe(node);
+    },
+    [logEvent],
+  );
 
   const money = (n: number, ccy: string) => `${ccy} ${Number(n).toLocaleString()}`;
   // EVA Service Fee — matches the proposal document + Step 3 pricing.
@@ -89,7 +133,11 @@ export default function PublicProposalPage() {
 
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)", marginTop: "var(--space-8)" }}>
           {proposal.venues.map((v, i) => (
-            <div key={v.venue_id} style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", padding: "var(--space-6)" }}>
+            <div
+              key={v.venue_id}
+              ref={observeVenueCard(v.venue_id)}
+              style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", padding: "var(--space-6)" }}
+            >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                 <div>
                   <div style={{ fontSize: "0.6rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-accent)" }}>

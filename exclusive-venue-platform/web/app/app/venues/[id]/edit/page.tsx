@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import PageLoader from "@/components/PageLoader";
-import PricingRulesTab from "./PricingRulesTab";
+import PricingRulesTab from "@/components/PricingRulesTab";
 import {
   FILM_STATUS_LABEL,
   RESTRICTION_KINDS,

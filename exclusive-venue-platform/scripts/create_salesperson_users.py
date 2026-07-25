@@ -7,7 +7,9 @@ ever a hardcoded display-name string in web/lib/team.ts (TEAM). Also
 promotes the existing test@user.com dev account (scripts/create_test_
 staff_user.py) to `admin` in addition to its `staff` row, so every
 Playwright verification flow already using it keeps working unchanged
-as the "sees everything" manager persona.
+as the "sees everything" manager persona — and promotes Saoud Maherzi to
+`admin` too (Dashboard task, 25 Jul): he's the real named manager persona
+product-side, test@user.com stays admin purely as a dev/test fixture.
 
 Demo placeholder emails/password — swap in real ones later with zero
 code changes, same idempotent create-or-reuse shape as
@@ -27,6 +29,7 @@ from supabase import create_client
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "api", ".env"))
 
 ADMIN_EMAIL = "test@user.com"
+SAOUD_EMAIL = "saoud.maherzi@exclusivevenue.demo"
 
 # Same four names as web/lib/team.ts's TEAM — this script is what finally
 # backs those display-name strings with a real login apiece.
@@ -106,6 +109,13 @@ def main() -> None:
     else:
         _ensure_role(client, admin_user.id, "admin")
         _ensure_profile(client, admin_user.id, "Operator Admin")
+
+    print(f"\n{SAOUD_EMAIL} (promoting to admin)")
+    saoud_user = _find_user_by_email(client, SAOUD_EMAIL)
+    if not saoud_user:
+        print(f"  {SAOUD_EMAIL} does not exist yet — run this script's salesperson loop first, skipping")
+    else:
+        _ensure_role(client, saoud_user.id, "admin")
 
 
 if __name__ == "__main__":
