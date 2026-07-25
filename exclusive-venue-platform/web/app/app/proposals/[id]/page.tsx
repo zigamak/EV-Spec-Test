@@ -7,6 +7,7 @@ import { apiFetch, ApiError } from "@/lib/api/client";
 import type { Proposal, ProposalAnalytics, ProposalLinkToken, ProposalVenue } from "@/lib/api/types";
 import DeclineModal from "../../enquiries/DeclineModal";
 import PageLoader from "@/components/PageLoader";
+import ThinkingOrb from "@/components/ThinkingOrb";
 
 const buttonStyle: React.CSSProperties = {
   padding: "var(--space-2) var(--space-4)",
@@ -323,7 +324,13 @@ export default function ProposalEditorPage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Intro copy</h2>
           <button style={buttonStyle} disabled={generatingIntro} onClick={handleGenerateIntro}>
-            {generatingIntro ? "Generating…" : "Generate with AI"}
+            {generatingIntro ? (
+              <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <ThinkingOrb size={16} /> Generating…
+              </span>
+            ) : (
+              "Generate with AI"
+            )}
           </button>
         </div>
         <textarea
@@ -493,7 +500,13 @@ function ProposalVenueCard({
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)" }}>Venue copy</span>
           <button style={buttonStyle} disabled={generating} onClick={handleGenerate}>
-            {generating ? "Generating…" : "Generate with AI"}
+            {generating ? (
+              <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <ThinkingOrb size={16} /> Generating…
+              </span>
+            ) : (
+              "Generate with AI"
+            )}
           </button>
         </div>
         <textarea style={{ ...textareaStyle, marginTop: "var(--space-2)" }} value={copy} onChange={(e) => setCopy(e.target.value)} />

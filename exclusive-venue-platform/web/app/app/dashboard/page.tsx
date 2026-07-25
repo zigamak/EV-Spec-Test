@@ -287,7 +287,7 @@ export default function DashboardPage() {
                 <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
                 <YAxis type="category" dataKey="status" tick={{ fontSize: 12 }} width={100} style={{ textTransform: "capitalize" }} />
                 <Tooltip />
-                <Bar dataKey="count" name="Proposals" fill="var(--color-navy)" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="count" name="Proposals" fill="var(--color-navy)" radius={[0, 4, 4, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -304,7 +304,7 @@ export default function DashboardPage() {
                 <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
                 <YAxis type="category" dataKey="reason" tick={{ fontSize: 12 }} width={120} />
                 <Tooltip />
-                <Bar dataKey="count" name="Lost" fill="var(--color-danger)" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="count" name="Lost" fill="var(--color-danger)" radius={[0, 4, 4, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -325,7 +325,7 @@ export default function DashboardPage() {
                     <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
                     <Tooltip formatter={(v) => money(Number(v), kpis.currency)} />
-                    <Line type="monotone" dataKey="revenue" stroke="var(--color-accent)" strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="revenue" stroke="var(--color-accent)" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -345,7 +345,7 @@ export default function DashboardPage() {
                     <YAxis type="category" dataKey="staff_name" tick={{ fontSize: 12 }} width={110} />
                     <Tooltip formatter={(v) => money(Number(v), kpis.currency)} />
                     <Legend />
-                    <Bar dataKey="revenue" name="Revenue" fill="var(--color-accent)" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="revenue" name="Revenue" fill="var(--color-accent)" radius={[0, 4, 4, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -363,7 +363,7 @@ export default function DashboardPage() {
                     <YAxis type="category" dataKey="venue_name" tick={{ fontSize: 12 }} width={140} />
                     <Tooltip formatter={(v) => money(Number(v), kpis.currency)} />
                     <Legend />
-                    <Bar dataKey="revenue" name="Revenue" fill="var(--color-navy)" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="revenue" name="Revenue" fill="var(--color-navy)" radius={[0, 4, 4, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -386,8 +386,8 @@ export default function DashboardPage() {
                     <YAxis type="category" dataKey="staff_name" tick={{ fontSize: 12 }} width={110} />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="open_count" name="Open" stackId="w" fill="var(--color-brass)" />
-                    <Bar dataKey="awaiting_count" name="Awaiting" stackId="w" fill="var(--color-accent)" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="open_count" name="Open" stackId="w" fill="var(--color-brass)" isAnimationActive={false} />
+                    <Bar dataKey="awaiting_count" name="Awaiting" stackId="w" fill="var(--color-accent)" radius={[0, 4, 4, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               )}

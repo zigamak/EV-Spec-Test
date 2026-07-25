@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiDownload, apiFetch, apiFetchText, ApiError } from "@/lib/api/client";
+import ThinkingOrb from "@/components/ThinkingOrb";
 import type {
   Brief,
   Contact,
@@ -1053,7 +1054,13 @@ export default function ProposalBuilderPage() {
                   disabled={generatingEmail}
                   style={{ padding: "var(--space-2) var(--space-4)", border: "1px solid var(--color-accent)", background: "var(--color-bg)", color: "var(--color-accent)", fontSize: "0.65rem", letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600, cursor: generatingEmail ? "default" : "pointer" }}
                 >
-                  {generatingEmail ? "Drafting…" : "✦ Draft with AI"}
+                  {generatingEmail ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}>
+                      <ThinkingOrb size={14} /> Drafting…
+                    </span>
+                  ) : (
+                    "✦ Draft with AI"
+                  )}
                 </button>
               </div>
               <textarea
