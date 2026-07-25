@@ -17,6 +17,7 @@ import {
   type ShortlistResponse,
 } from "@/lib/api/types";
 import DeclineModal from "../DeclineModal";
+import PageLoader from "@/components/PageLoader";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -240,7 +241,7 @@ export default function EnquiryCommandCenterPage() {
   if (!enquiry) {
     return (
       <main style={{ padding: "var(--space-8)" }}>
-        <p style={{ color: "var(--color-text-muted)" }}>Loading…</p>
+        <PageLoader label="Loading the enquiry" />
       </main>
     );
   }

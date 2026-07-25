@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
+import PageLoader from "@/components/PageLoader";
 import PricingRulesTab from "./PricingRulesTab";
 import {
   FILM_STATUS_LABEL,
@@ -300,9 +301,7 @@ export default function EditVenuePage() {
   if (!venue) {
     return (
       <main style={{ padding: "var(--space-8)" }}>
-        <p style={{ color: error ? "var(--color-danger)" : "var(--color-text-muted)" }}>
-          {error ?? "Loading…"}
-        </p>
+        {error ? <p style={{ color: "var(--color-danger)" }}>{error}</p> : <PageLoader label="Loading the venue" />}
       </main>
     );
   }

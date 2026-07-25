@@ -6,6 +6,7 @@ import { apiFetch, ApiError } from "@/lib/api/client";
 import { OWNER_COLOR, WHOLE_TEAM, useStaffDirectory } from "@/lib/team";
 import type { EnquiryWithBriefs, VenueAvailability, VenueWithAvailability } from "@/lib/api/types";
 import { toIsoDate } from "@/lib/utils";
+import PageLoader from "@/components/PageLoader";
 
 // Three categories: signed enquiries (contract executed), unconfirmed
 // enquiries (a proposal is out — proposed/held stage — the date is
@@ -138,7 +139,7 @@ export default function PortfolioCalendarPage() {
   if (!windows) {
     return (
       <main style={{ padding: "var(--space-8)" }}>
-        <p style={{ color: "var(--color-text-muted)" }}>Loading…</p>
+        <PageLoader label="Loading the calendar" />
       </main>
     );
   }

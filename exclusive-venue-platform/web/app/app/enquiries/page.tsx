@@ -17,6 +17,7 @@ import { OWNER_COLOR, WHOLE_TEAM, initialsFromName, useStaffDirectory } from "@/
 import { useMe } from "@/lib/useMe";
 import ForwardToModal from "./ForwardToModal";
 import DeclineModal from "./DeclineModal";
+import PageLoader from "@/components/PageLoader";
 
 // Intake/triage pool sentinel — distinct from WHOLE_TEAM (no filter) and any
 // real name. Mirrors the Pipeline board's owner filter exactly (web/app/app/
@@ -411,7 +412,9 @@ export default function InquiriesInboxPage() {
         <div style={{ overflowY: "auto", flex: 1 }}>
           {error && <p style={{ color: "var(--color-danger)", padding: "0 var(--space-8)" }}>{error}</p>}
           {!error && rows === null && (
-            <p style={{ color: "var(--color-text-muted)", padding: "0 var(--space-8)" }}>Loading…</p>
+            <div style={{ padding: "0 var(--space-8)" }}>
+              <PageLoader label="Loading the inbox" />
+            </div>
           )}
           {rows !== null && visible.length === 0 && (
             <p style={{ color: "var(--color-text-muted)", padding: "0 var(--space-8)" }}>

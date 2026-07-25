@@ -25,6 +25,7 @@ import {
   type TimelineEntry,
 } from "@/lib/api/types";
 import { avatarColorForId, relativeTime } from "@/lib/utils";
+import PageLoader from "@/components/PageLoader";
 
 type Tab = "all" | "brands" | "people";
 type Selection = { type: "org"; id: string } | { type: "contact"; id: string } | null;
@@ -203,7 +204,11 @@ export default function ContactsDirectoryPage() {
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "0 var(--space-4) var(--space-6)" }}>
-          {organisations === null && <p style={{ padding: "0 var(--space-2)", color: "var(--color-text-muted)" }}>Loading…</p>}
+          {organisations === null && (
+            <div style={{ padding: "0 var(--space-2)" }}>
+              <PageLoader label="Loading contacts" />
+            </div>
+          )}
 
           {(tab === "all" || tab === "brands") && filteredOrgs.length > 0 && (
             <>
@@ -815,7 +820,7 @@ function OrgDetail({
   }
 
   if (error) return <p style={{ padding: "var(--space-8)", color: "var(--color-danger)" }}>{error}</p>;
-  if (!summary) return <p style={{ padding: "var(--space-8)", color: "var(--color-text-muted)" }}>Loading…</p>;
+  if (!summary) return <div style={{ padding: "var(--space-8)" }}><PageLoader label="Loading" /></div>;
 
   const { organisation: org, contacts, stats, auto_imported } = summary;
   const primaryEmail = org.email ?? contacts.find((c) => c.email)?.email;
@@ -1158,7 +1163,7 @@ function ContactDetail({
   }
 
   if (error) return <p style={{ padding: "var(--space-8)", color: "var(--color-danger)" }}>{error}</p>;
-  if (!summary) return <p style={{ padding: "var(--space-8)", color: "var(--color-text-muted)" }}>Loading…</p>;
+  if (!summary) return <div style={{ padding: "var(--space-8)" }}><PageLoader label="Loading" /></div>;
 
   const { contact, organisation, stats } = summary;
 

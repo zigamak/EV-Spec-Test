@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import type { Proposal, ProposalStatus } from "@/lib/api/types";
+import PageLoader from "@/components/PageLoader";
 
 /** Proposals index (task G8) — every proposal, newest first, filterable by
  * status. Each row opens the proposal editor (/app/proposals/[id]). The
@@ -95,7 +96,9 @@ export default function ProposalsPage() {
 
       {error && <p style={{ color: "var(--color-danger)", marginTop: "var(--space-4)" }}>{error}</p>}
       {!error && proposals === null && (
-        <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)" }}>Loading…</p>
+        <div style={{ marginTop: "var(--space-4)" }}>
+          <PageLoader label="Loading proposals" />
+        </div>
       )}
       {proposals !== null && visible.length === 0 && (
         <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)" }}>

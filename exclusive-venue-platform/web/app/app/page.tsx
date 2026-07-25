@@ -20,6 +20,7 @@ import { OWNER_COLOR, WHOLE_TEAM, initialsFromName, useStaffDirectory } from "@/
 import { useMe } from "@/lib/useMe";
 import NewEnquiryModal from "./NewEnquiryModal";
 import DeclineModal from "./enquiries/DeclineModal";
+import PageLoader from "@/components/PageLoader";
 
 interface BoardCard {
   enquiry: EnquiryWithBriefs;
@@ -634,7 +635,9 @@ export default function PipelineBoardPage() {
         <p style={{ color: "var(--color-danger)", marginTop: "var(--space-4)" }}>{error}</p>
       )}
       {!error && cards === null && (
-        <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)" }}>Loading…</p>
+        <div style={{ marginTop: "var(--space-4)" }}>
+          <PageLoader label="Loading the pipeline" />
+        </div>
       )}
       {actionError && (
         <div

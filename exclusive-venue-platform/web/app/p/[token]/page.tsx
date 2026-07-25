@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import type { PublicProposal } from "@/lib/api/types";
+import PageLoader from "@/components/PageLoader";
 
 /**
  * Public, read-only proposal page (task G5) — the destination of a shareable
@@ -54,8 +55,8 @@ export default function PublicProposalPage() {
 
   if (!proposal) {
     return (
-      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--color-surface)", color: "var(--color-text-muted)" }}>
-        Loading…
+      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--color-surface)" }}>
+        <PageLoader label="Loading your proposal" />
       </main>
     );
   }

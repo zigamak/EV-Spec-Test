@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import type { Proposal, ProposalLinkToken, ProposalVenue } from "@/lib/api/types";
 import DeclineModal from "../../enquiries/DeclineModal";
+import PageLoader from "@/components/PageLoader";
 
 const buttonStyle: React.CSSProperties = {
   padding: "var(--space-2) var(--space-4)",
@@ -247,7 +248,7 @@ export default function ProposalEditorPage() {
   if (!proposal) {
     return (
       <main style={{ padding: "var(--space-8)" }}>
-        <p style={{ color: "var(--color-text-muted)" }}>Loading…</p>
+        <PageLoader label="Loading the proposal" />
       </main>
     );
   }

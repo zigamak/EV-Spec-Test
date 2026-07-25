@@ -13,6 +13,7 @@ import {
   type VenueWithProfile,
 } from "@/lib/api/types";
 import { toIsoDate } from "@/lib/utils";
+import PageLoader from "@/components/PageLoader";
 
 const REASON_COLOR: Record<AvailabilityReason, string> = {
   booked: "var(--color-danger)",
@@ -163,7 +164,7 @@ export default function VenueProfilePage() {
   if (!profile) {
     return (
       <main style={{ padding: "var(--space-8)" }}>
-        <p style={{ color: "var(--color-text-muted)" }}>Loading…</p>
+        <PageLoader label="Loading the venue" />
       </main>
     );
   }
@@ -822,7 +823,7 @@ function RestrictionsPanel({ venueId }: { venueId: string }) {
     };
   }, [venueId]);
 
-  if (restrictions === null) return <p style={{ color: "var(--color-text-muted)" }}>Loading…</p>;
+  if (restrictions === null) return <PageLoader label="Loading" inline />;
   if (restrictions.length === 0) return <p style={{ color: "var(--color-text-muted)" }}>No restrictions on file.</p>;
 
   return (
