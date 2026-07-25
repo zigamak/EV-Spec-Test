@@ -11,9 +11,10 @@ beyond what a client should see of their own proposal.
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from app.core.admin_client import get_admin_client
+from app.core.rate_limit import enforce_public_rate_limit
 from app.schemas.proposal import PublicProposal, PublicProposalVenue, ProposalEventCreate
 
 router = APIRouter(prefix="/public/proposals", tags=["public-proposals"])
@@ -33,7 +34,8 @@ def _validate_token(client, token: str) -> dict:
 
 
 @router.get("/{token}", response_model=PublicProposal)
-def get_public_proposal(token: str):
+def get_public_proposal(token: str, request: Request):
+    enforce_public_rate_limit(request, token)
     client = get_admin_client()
     token_row = _validate_token(client, token)
 
@@ -82,11 +84,12 @@ def get_public_proposal(token: str):
 
 
 @router.post("/{token}/events", status_code=status.HTTP_204_NO_CONTENT)
-def record_proposal_event(token: str, payload: ProposalEventCreate):
+def record_proposal_event(token: str, payload: ProposalEventCreate, request: Request):
     """Written by the public link page itself (open on load, venue_seen
     per venue card scrolled into view — see web/app/p/[token]/page.tsx).
     Same trust model as the GET above: token validated before anything
     is trusted, service-role client, no staff session involved."""
+    enforce_public_rate_limit(request, token)
     client = get_admin_client()
     token_row = _validate_token(client, token)
     proposal_id = token_row["proposal_id"]
