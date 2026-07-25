@@ -2,9 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useMe } from "@/lib/useMe";
+
+async function signOutAndRedirect() {
+  await createClient().auth.signOut();
+  window.location.href = "/app/login";
+}
 
 /**
  * Sidebar structure follows the Operator Console design brief (WORKSPACE /
@@ -67,7 +72,22 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const showNav = pathname !== "/app/login";
   const [email, setEmail] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const me = useMe();
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (!showNav) return;
@@ -83,13 +103,9 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
     if (!showNav) return;
     const IDLE_LIMIT_MS = 2 * 60 * 60 * 1000; // 2 hours of no activity
     let timer: ReturnType<typeof setTimeout>;
-    const logout = async () => {
-      await createClient().auth.signOut();
-      window.location.href = "/app/login";
-    };
     const reset = () => {
       clearTimeout(timer);
-      timer = setTimeout(logout, IDLE_LIMIT_MS);
+      timer = setTimeout(signOutAndRedirect, IDLE_LIMIT_MS);
     };
     const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
     events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
@@ -223,32 +239,95 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
         <div style={{ flex: 1 }} />
 
         {email && (
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "0 var(--space-2)" }}>
-            <span
+          <div ref={menuRef} style={{ position: "relative" }}>
+            {menuOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "calc(100% + 8px)",
+                  left: 0,
+                  right: 0,
+                  background: "var(--color-navy-hover)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  borderRadius: "var(--radius-sm)",
+                  overflow: "hidden",
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                }}
+              >
+                <Link
+                  href="/app/settings"
+                  style={{
+                    display: "block",
+                    padding: "var(--space-3) var(--space-4)",
+                    color: "#fff",
+                    fontSize: "0.85rem",
+                    textDecoration: "none",
+                  }}
+                >
+                  Settings
+                </Link>
+                <button
+                  onClick={signOutAndRedirect}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "var(--space-3) var(--space-4)",
+                    color: "#e0a3ad",
+                    fontSize: "0.85rem",
+                    background: "none",
+                    border: "none",
+                    borderTop: "1px solid rgba(255,255,255,0.12)",
+                    cursor: "pointer",
+                  }}
+                >
+                  Log out
+                </button>
+              </div>
+            )}
+            <button
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-expanded={menuOpen}
               style={{
-                width: "32px",
-                height: "32px",
-                borderRadius: "50%",
-                background: "var(--color-accent)",
-                color: "#fff",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
-                fontSize: "0.75rem",
-                fontWeight: 700,
-                flexShrink: 0,
+                gap: "var(--space-2)",
+                padding: "var(--space-2)",
+                width: "100%",
+                background: menuOpen ? "var(--color-navy-hover)" : "none",
+                border: "none",
+                borderRadius: "var(--radius-sm)",
+                cursor: "pointer",
+                textAlign: "left",
               }}
             >
-              {initialsFromEmail(email)}
-            </span>
-            <div style={{ overflow: "hidden" }}>
-              <div style={{ fontSize: "0.85rem", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-                {me?.full_name ?? email}
+              <span
+                style={{
+                  width: "32px",
+                  height: "32px",
+                  borderRadius: "50%",
+                  background: "var(--color-accent)",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "0.75rem",
+                  fontWeight: 700,
+                  flexShrink: 0,
+                }}
+              >
+                {initialsFromEmail(email)}
+              </span>
+              <div style={{ overflow: "hidden", flex: 1 }}>
+                <div style={{ fontSize: "0.85rem", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden", color: "#fff" }}>
+                  {me?.full_name ?? email}
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "var(--color-navy-text-muted)" }}>
+                  {me?.role === "admin" ? "Admin" : "Staff"}
+                </div>
               </div>
-              <div style={{ fontSize: "0.75rem", color: "var(--color-navy-text-muted)" }}>
-                {me?.role === "admin" ? "Admin" : "Staff"}
-              </div>
-            </div>
+              <span style={{ color: "var(--color-navy-text-muted)", fontSize: "0.7rem" }}>{menuOpen ? "▾" : "▸"}</span>
+            </button>
           </div>
         )}
       </aside>
