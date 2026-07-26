@@ -32,6 +32,17 @@ Three role-locked agents, kept as-is from the kit because they structurally enfo
 6. **Verification.** A task is done only when `/verify` passes: CI suite green, golden set green, `verification.md` acceptance criteria satisfied.
 7. **Schema changes.** Tables are created incrementally via Alembic, scoped to the task that first needs them. RLS ships in the same revision as its table. Merged revisions are immutable — further changes are new revisions. `erd.md` is the target-state design; `migrations/versions/` is the real history.
 
+## Performance convention: one request per page load
+
+`web/app/app/**` pages are Client Components (`"use client"` + `useEffect`/`apiFetch`), not Next.js Server Components — every page load is CSR: empty shell renders, then the component mounts and fetches. Each `apiFetch` call pays its own cost on the backend too, because `app/core/scoped_client.py` deliberately builds a **fresh** Supabase client per request rather than caching one — caching previously caused pooled connections to go stale (Supabase's pooler closes idle ones) and fail with `httpx.RemoteProtocolError` → intermittent 500s. That tradeoff stays; don't "fix" it by reintroducing a cached/shared client.
+
+Given both of those are fixed costs, the lever that's actually ours to pull is **call count**: a page that fires 3 parallel `apiFetch` calls pays 3x the client-creation cost and waits on the slowest of three round trips; one combined endpoint pays it once. Established pattern (24 Jul perf pass, extending the `/venues/portfolio` and `/venues/{id}/profile` convention that already existed):
+
+- When a page's initial `useEffect` load fires more than one `apiFetch` (parallel `Promise.all` or, worse, sequential awaits), add one backend endpoint that runs the underlying queries through a single scoped client and returns them together, then point the page at that one endpoint instead.
+- When a list-then-per-item-fetch loop appears (N+1), embed the child relation via PostgREST's relationship syntax (`select("*, child_table(*)")`) in the parent's existing list query instead of looping.
+- Live examples of the pattern: `GET /enquiries/inbox`, `GET /venues/calendar-data`, `GET /contacts-directory`, `GET /organisations/{id}/detail`, `GET /contacts/{id}/detail`, `GET /proposals/{id}/venue-options`, and `GET /venues/{id}/profile` (now also embeds `venue_restrictions`, `pricing_rules`, `venue_availability` — used by both the Venue Profile and Venue Edit pages). `GET /venues/{id}/pricing-rules` embeds `pricing_rule_addons` the same way.
+- This does not touch the CSR-vs-Server-Component question — converting a page to a Server Component (fetching during SSR, sending populated HTML) is the bigger structural fix and hasn't been done anywhere yet. Call-count reduction is the cheap, low-risk win available without that migration.
+
 ## Truth hierarchy (the drift killer)
 
 | Surface | Role | Updated |

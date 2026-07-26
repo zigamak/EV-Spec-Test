@@ -21,6 +21,7 @@ from app.routers import (
     proposals,
     public_proposals,
     recommendations,
+    staff,
     venue_media,
     venue_profile,
     venues,
@@ -48,7 +49,7 @@ async def log_unhandled_exceptions(request: Request, exc: Exception) -> JSONResp
 # config, not hardcoded here.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"]
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://172.26.0.1:3000"]
     if get_settings().environment == "development"
     else [],
     allow_credentials=True,
@@ -61,6 +62,7 @@ app.include_router(venues.router)
 app.include_router(venue_media.router)
 app.include_router(venue_profile.router)
 app.include_router(enquiries.router)
+app.include_router(staff.router)
 app.include_router(contacts_directory.router)
 app.include_router(briefs.router)
 app.include_router(pricing.router)

@@ -78,23 +78,26 @@ export default function EditVenuePage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [venueData, configData, restrictionData, mediaData, activationData, filmData, teamData] =
-        await Promise.all([
-          apiFetch<Venue>(`/venues/${venueId}`),
-          apiFetch<VenueConfiguration[]>(`/venues/${venueId}/configurations`),
-          apiFetch<VenueRestriction[]>(`/venues/${venueId}/restrictions`),
-          apiFetch<VenueMedia[]>(`/venues/${venueId}/media`),
-          apiFetch<VenueActivation[]>(`/venues/${venueId}/activations`),
-          apiFetch<VenueFilm[]>(`/venues/${venueId}/films`),
-          apiFetch<VenueTeamContact[]>(`/venues/${venueId}/team`),
-        ]);
-      setVenue(venueData);
-      setConfigurations(configData);
-      setRestrictions(restrictionData);
-      setMedia(mediaData.sort((a, b) => a.sort_order - b.sort_order));
-      setActivations(activationData);
-      setFilms(filmData);
-      setTeamContacts(teamData);
+      // /profile embeds every relation this page needs in one round trip
+      // (see routers/venue_profile.py) — this used to be 7 separate
+      // fetches, each paying its own Supabase client TLS handshake.
+      const profile = await apiFetch<
+        Venue & {
+          venue_configurations: VenueConfiguration[];
+          venue_restrictions: VenueRestriction[];
+          venue_media: VenueMedia[];
+          venue_activations: VenueActivation[];
+          venue_films: VenueFilm[];
+          venue_team_contacts: VenueTeamContact[];
+        }
+      >(`/venues/${venueId}/profile`);
+      setVenue(profile);
+      setConfigurations(profile.venue_configurations);
+      setRestrictions(profile.venue_restrictions);
+      setMedia([...profile.venue_media].sort((a, b) => a.sort_order - b.sort_order));
+      setActivations(profile.venue_activations);
+      setFilms(profile.venue_films);
+      setTeamContacts(profile.venue_team_contacts);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load venue");
     }

@@ -679,6 +679,9 @@ export interface PricingRule {
   notes: string | null;
   effective_from: string;
   effective_to: string | null;
+  // Only populated by GET /venues/{id}/pricing-rules (embeds addons via
+  // PostgREST — 24 Jul perf pass, see routers/pricing.py).
+  pricing_rule_addons?: PricingRuleAddon[];
 }
 
 export interface PricingRuleCreate {

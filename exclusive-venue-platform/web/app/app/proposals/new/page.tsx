@@ -246,10 +246,10 @@ export default function ProposalBuilderPage() {
     if (!brief || !proposal) return;
     setVenuesError(null);
     try {
-      const [pf, pv] = await Promise.all([
-        apiFetch<VenueWithPortfolio[]>("/venues/portfolio?status_filter=active"),
-        apiFetch<ProposalVenue[]>(`/proposals/${proposal.id}/venues`),
-      ]);
+      const { portfolio: pf, picked: pv } = await apiFetch<{
+        portfolio: VenueWithPortfolio[];
+        picked: ProposalVenue[];
+      }>(`/proposals/${proposal.id}/venue-options`);
       setPortfolio(pf);
       setPicked(pv);
     } catch (err) {

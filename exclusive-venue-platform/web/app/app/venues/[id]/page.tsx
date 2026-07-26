@@ -101,14 +101,15 @@ export default function VenueProfilePage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [profileData, pricingData, availabilityData] = await Promise.all([
-        apiFetch<VenueWithProfile>(`/venues/${venueId}/profile`),
-        apiFetch<PricingRule[]>(`/venues/${venueId}/pricing-rules`),
-        apiFetch<VenueAvailability[]>(`/venues/${venueId}/availability`),
-      ]);
+      // /profile now embeds pricing_rules + venue_availability too (24 Jul
+      // perf pass) — was 3 separate fetches, each paying its own Supabase
+      // client TLS handshake (app/core/scoped_client.py).
+      const profileData = await apiFetch<
+        VenueWithProfile & { pricing_rules: PricingRule[]; venue_availability: VenueAvailability[] }
+      >(`/venues/${venueId}/profile`);
       setProfile(profileData);
-      setPricingRules(pricingData);
-      setAvailability(availabilityData);
+      setPricingRules(profileData.pricing_rules);
+      setAvailability(profileData.venue_availability);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load venue");
     }

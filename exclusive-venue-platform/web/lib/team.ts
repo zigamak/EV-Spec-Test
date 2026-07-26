@@ -1,12 +1,23 @@
-/** Operator team directory for the "Forward to" hand-off. These are the
- * reference team from the design; not platform auth accounts, which is why
- * forwarding writes enquiries.forwarded_to (a name) rather than assigned_to
- * (an auth.users FK). When real staff logins exist, this can be replaced by
- * a live directory fetch without touching the modal. */
+/** Operator team directory for the "Forward to" hand-off.
+ *
+ * TEAM below is now a *fallback / display metadata* layer: the real accounts
+ * live in Supabase (see scripts/seed_staff_users.py) and are fetched live via
+ * GET /staff (fetchStaff). Forwarding writes both enquiries.assigned_to (the
+ * real auth.users id) and forwarded_to (the display name, kept because the
+ * pipeline owner filter + OWNER_COLOR key off the name). Names here match the
+ * seeded users exactly, so region/role titles still decorate the live list. */
 export interface TeamMember {
   name: string;
   role: string;
   region: string;
+}
+
+/** A real staff account from GET /staff. `role` here is the auth role
+ * ("staff" | "admin"), distinct from the TeamMember job title. */
+export interface StaffMember {
+  id: string;
+  full_name: string;
+  role: string;
 }
 
 export const TEAM: TeamMember[] = [
@@ -15,6 +26,12 @@ export const TEAM: TeamMember[] = [
   { name: "Sammi Chiu", role: "GM", region: "Hong Kong" },
   { name: "Saoud Maherzi", role: "Chairman", region: "Exclusive Venue Asia" },
 ];
+
+/** Job title + region decoration, keyed by the seeded full name. Merged onto
+ * the live GET /staff list so the modal can still show "Account Director ·
+ * Hong Kong" without storing that in the DB yet. */
+export const TEAM_META: Record<string, { role: string; region: string }> =
+  Object.fromEntries(TEAM.map((m) => [m.name, { role: m.role, region: m.region }]));
 
 /** Sentinel used when forwarding to everyone at once. */
 export const WHOLE_TEAM = "The whole team";
@@ -30,6 +47,13 @@ export const OWNER_COLOR: Record<string, string> = {
   "Henry Wong": "var(--color-success)",
   "Saoud Maherzi": "var(--color-brass)",
 };
+
+/** Live operator directory (real accounts). Falls back to the static TEAM
+ * names if the call fails, so the hand-off modal always has options. */
+export async function fetchStaff(): Promise<StaffMember[]> {
+  const { apiFetch } = await import("@/lib/api/client");
+  return apiFetch<StaffMember[]>("/staff");
+}
 
 export function initialsFromName(name: string): string {
   return name

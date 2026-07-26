@@ -40,15 +40,14 @@ export default function PricingRulesTab({ venueId }: { venueId: string }) {
 
   const load = useCallback(async () => {
     try {
+      // Addons come embedded on each rule now (routers/pricing.py) —
+      // used to be one GET per rule after the initial list (N+1, found
+      // 24 Jul during a perf pass).
       const data = await apiFetch<PricingRule[]>(`/venues/${venueId}/pricing-rules`);
       setRules(data);
-      const addonEntries = await Promise.all(
-        data.map(async (rule) => [
-          rule.id,
-          await apiFetch<PricingRuleAddon[]>(`/venues/${venueId}/pricing-rules/${rule.id}/addons`),
-        ] as const),
+      setAddonsByRule(
+        Object.fromEntries(data.map((rule) => [rule.id, rule.pricing_rule_addons ?? []])),
       );
-      setAddonsByRule(Object.fromEntries(addonEntries));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load pricing rules");
     }

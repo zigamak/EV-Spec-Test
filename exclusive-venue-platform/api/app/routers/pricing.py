@@ -59,10 +59,14 @@ def _get_rule_or_404(client: Client, venue_id: UUID, rule_id: UUID) -> dict:
 
 @router.get("", response_model=list[PricingRule])
 def list_pricing_rules(venue_id: UUID, client: ScopedClient, _: Staff):
+    """Embeds each rule's addons via PostgREST's relationship syntax —
+    replaces PricingRulesTab.tsx's rules-then-one-GET-per-rule-for-addons
+    loop (an N+1 found 24 Jul during a perf pass), same rationale as
+    /venues/portfolio in routers/venues.py."""
     try:
         result = (
             client.table("pricing_rules")
-            .select("*")
+            .select("*, pricing_rule_addons(*)")
             .eq("venue_id", str(venue_id))
             .order("effective_from", desc=True)
             .execute()

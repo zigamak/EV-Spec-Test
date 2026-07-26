@@ -155,13 +155,21 @@ def _get_org_and_contacts(client: Client, organisation_id: UUID) -> tuple[dict, 
     return org_result.data[0], contacts_result.data
 
 
-@router.get("/organisations/{organisation_id}/summary", response_model=OrganisationSummary)
-def get_organisation_summary(organisation_id: UUID, client: ScopedClient, _: Staff):
+def _build_organisation_summary(
+    client: Client, organisation_id: UUID
+) -> tuple[OrganisationSummary, dict, list[dict]]:
     org, contacts = _get_org_and_contacts(client, organisation_id)
     contact_ids = [c["id"] for c in contacts]
     stats = _deal_stats(client, contact_ids)
     auto_imported = bool(contacts) and all(c["source"] != "manual" for c in contacts)
-    return OrganisationSummary(organisation=org, contacts=contacts, stats=stats, auto_imported=auto_imported)
+    summary = OrganisationSummary(organisation=org, contacts=contacts, stats=stats, auto_imported=auto_imported)
+    return summary, org, contacts
+
+
+@router.get("/organisations/{organisation_id}/summary", response_model=OrganisationSummary)
+def get_organisation_summary(organisation_id: UUID, client: ScopedClient, _: Staff):
+    summary, _org, _contacts = _build_organisation_summary(client, organisation_id)
+    return summary
 
 
 class ContactSummary(BaseModel):
@@ -170,8 +178,7 @@ class ContactSummary(BaseModel):
     stats: DealStats
 
 
-@router.get("/contacts/{contact_id}/summary", response_model=ContactSummary)
-def get_contact_summary(contact_id: UUID, client: ScopedClient, _: Staff):
+def _build_contact_summary(client: Client, contact_id: UUID) -> tuple[ContactSummary, dict]:
     try:
         contact_result = client.table("contacts").select("*").eq("id", str(contact_id)).execute()
     except APIError as exc:
@@ -191,7 +198,13 @@ def get_contact_summary(contact_id: UUID, client: ScopedClient, _: Staff):
         organisation = org_result.data[0] if org_result.data else None
 
     stats = _deal_stats(client, [str(contact_id)])
-    return ContactSummary(contact=contact, organisation=organisation, stats=stats)
+    return ContactSummary(contact=contact, organisation=organisation, stats=stats), contact
+
+
+@router.get("/contacts/{contact_id}/summary", response_model=ContactSummary)
+def get_contact_summary(contact_id: UUID, client: ScopedClient, _: Staff):
+    summary, _contact = _build_contact_summary(client, contact_id)
+    return summary
 
 
 # --- Conversation timeline ---------------------------------------------
@@ -444,3 +457,63 @@ def get_contact_timeline(contact_id: UUID, client: ScopedClient, _: Staff):
         "notes": None,
     }
     return _organisation_timeline(client, pseudo_org, [contact])
+
+
+# --- Combined endpoints (24 Jul perf pass) --------------------------------
+#
+# The directory page and its two detail panels each used to fire 2-3
+# separate requests on load, each paying its own Supabase client TLS
+# handshake (app/core/scoped_client.py deliberately rebuilds one per
+# request rather than caching — see that file's docstring for why).
+# These bundle the underlying queries behind one request/one client.
+
+
+class ContactsDirectory(BaseModel):
+    organisations: list[Organisation]
+    contacts: list[Contact]
+
+
+@router.get("/contacts-directory", response_model=ContactsDirectory)
+def get_contacts_directory(client: ScopedClient, _: Staff):
+    """Replaces the directory page's separate GET /organisations +
+    GET /contacts calls."""
+    try:
+        orgs = client.table("organisations").select("*").order("name").execute()
+        contacts = client.table("contacts").select("*").order("created_at", desc=True).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return ContactsDirectory(organisations=orgs.data, contacts=contacts.data)
+
+
+class OrganisationDetail(BaseModel):
+    summary: OrganisationSummary
+    timeline: list[TimelineEntry]
+
+
+@router.get("/organisations/{organisation_id}/detail", response_model=OrganisationDetail)
+def get_organisation_detail(organisation_id: UUID, client: ScopedClient, _: Staff):
+    """Replaces the org detail panel's separate .../summary + .../timeline
+    calls."""
+    summary, org, contacts = _build_organisation_summary(client, organisation_id)
+    timeline = _organisation_timeline(client, org, contacts)
+    return OrganisationDetail(summary=summary, timeline=timeline)
+
+
+class ContactDetail(BaseModel):
+    summary: ContactSummary
+    timeline: list[TimelineEntry]
+
+
+@router.get("/contacts/{contact_id}/detail", response_model=ContactDetail)
+def get_contact_detail(contact_id: UUID, client: ScopedClient, _: Staff):
+    """Replaces the contact detail panel's separate .../summary +
+    .../timeline calls."""
+    summary, contact = _build_contact_summary(client, contact_id)
+    pseudo_org = {
+        "id": f"contact-{contact['id']}",
+        "name": contact["full_name"],
+        "created_at": contact["created_at"],
+        "notes": None,
+    }
+    timeline = _organisation_timeline(client, pseudo_org, [contact])
+    return ContactDetail(summary=summary, timeline=timeline)

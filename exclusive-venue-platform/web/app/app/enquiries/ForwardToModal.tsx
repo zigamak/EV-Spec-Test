@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import { avatarColorForId } from "@/lib/utils";
-import { TEAM, WHOLE_TEAM } from "@/lib/team";
+import { fetchStaff, StaffMember, TEAM, TEAM_META, WHOLE_TEAM } from "@/lib/team";
 
-/** "Forward to" hand-off (task H5) — routes an enquiry to a team member and
- * records an optional note. Writes enquiries.forwarded_to + forward_note via
- * PATCH; see migration 0009 for why this is separate from assigned_to. */
+/** "Forward to" hand-off (task H5) — routes an enquiry to a real staff member
+ * (fetched live from GET /staff) and records an optional note. Writes
+ * enquiries.assigned_to (the real auth.users id), forwarded_to (display name,
+ * kept for the pipeline owner filter) + forward_note via PATCH. */
 
 function initials(name: string): string {
   return name
@@ -37,12 +38,37 @@ export default function ForwardToModal({
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [staff, setStaff] = useState<StaffMember[] | null>(null);
+
+  // Load the live operator directory; fall back to the static names if the
+  // call fails so the hand-off is never blocked.
+  useEffect(() => {
+    let active = true;
+    fetchStaff()
+      .then((rows) => active && setStaff(rows))
+      .catch(() => active && setStaff(null));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const directory: { name: string; id: string | null }[] =
+    staff && staff.length > 0
+      ? staff.map((s) => ({ name: s.full_name, id: s.id }))
+      : TEAM.map((m) => ({ name: m.name, id: null }));
 
   const options = [
-    ...TEAM.map((m) => ({ name: m.name, role: m.role, region: m.region, whole: false })),
+    ...directory.map((m) => ({
+      name: m.name,
+      id: m.id,
+      role: TEAM_META[m.name]?.role ?? "Staff",
+      region: TEAM_META[m.name]?.region ?? "",
+      whole: false,
+    })),
     {
       name: WHOLE_TEAM,
-      role: `${TEAM.map((m) => m.name.split(" ")[0]).join(", ")} — all notified`,
+      id: null,
+      role: `${directory.map((m) => m.name.split(" ")[0]).join(", ")} — all notified`,
       region: "",
       whole: true,
     },
@@ -53,9 +79,18 @@ export default function ForwardToModal({
     setSubmitting(true);
     setError(null);
     try {
+      // Assign to the real staff account when we have its id (single person,
+      // live directory). "The whole team" and the static fallback have no id,
+      // so only the display name is written.
+      const chosen = options.find((o) => o.name === selected);
+      const body: Record<string, unknown> = {
+        forwarded_to: selected,
+        forward_note: note || null,
+      };
+      if (chosen?.id) body.assigned_to = chosen.id;
       await apiFetch(`/enquiries/${enquiryId}`, {
         method: "PATCH",
-        body: JSON.stringify({ forwarded_to: selected, forward_note: note || null }),
+        body: JSON.stringify(body),
       });
       onForwarded(selected, note);
     } catch (err) {

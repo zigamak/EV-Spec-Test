@@ -10,6 +10,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.pricing import PricingRule
+
 VenueStatus = Literal["draft", "pending_approval", "active", "inactive"]
 VenueCategory = Literal[
     "event_space",
@@ -281,13 +283,19 @@ class VenueTeamContact(BaseModel):
 
 
 class VenueWithProfile(Venue):
-    """`GET /venues/{id}/profile` embeds every relation the redesigned
-    Venue Profile page needs in one round trip (media, configurations,
-    activations, films, team contacts) — same N+1-avoidance rationale as
-    VenueWithPortfolio."""
+    """`GET /venues/{id}/profile` embeds every relation either the Venue
+    Profile page or the Venue Edit page needs in one round trip (media,
+    configurations, restrictions, activations, films, team contacts,
+    pricing rules, availability) — same N+1-avoidance rationale as
+    VenueWithPortfolio. Callers only read the fields their page needs;
+    the extra fields in the payload cost nothing extra over the network
+    round trips they replace."""
 
     venue_media: list[VenueMedia] = Field(default_factory=list)
     venue_configurations: list[VenueConfiguration] = Field(default_factory=list)
+    venue_restrictions: list[VenueRestriction] = Field(default_factory=list)
     venue_activations: list[VenueActivation] = Field(default_factory=list)
     venue_films: list[VenueFilm] = Field(default_factory=list)
     venue_team_contacts: list[VenueTeamContact] = Field(default_factory=list)
+    pricing_rules: list[PricingRule] = Field(default_factory=list)
+    venue_availability: list[VenueAvailability] = Field(default_factory=list)

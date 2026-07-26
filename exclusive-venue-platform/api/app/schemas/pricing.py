@@ -37,23 +37,6 @@ class PricingRuleUpdate(BaseModel):
     effective_to: date | None = None
 
 
-class PricingRule(BaseModel):
-    id: UUID
-    venue_id: UUID
-    currency: str
-    base_rate: float
-    per_head_tiers: list[dict[str, Any]]
-    duration_multipliers: dict[str, Any]
-    day_adjustments: dict[str, float]
-    season_adjustments: list[dict[str, Any]]
-    min_spend: float | None
-    notes: str | None
-    effective_from: date
-    effective_to: date | None
-    created_at: datetime
-    updated_at: datetime
-
-
 class PricingRuleAddonCreate(BaseModel):
     name: str = Field(min_length=1)
     pricing_type: AddonPricingType
@@ -74,6 +57,30 @@ class PricingRuleAddon(BaseModel):
     amount: float
     created_at: datetime
     updated_at: datetime
+
+
+class PricingRule(BaseModel):
+    id: UUID
+    venue_id: UUID
+    currency: str
+    base_rate: float
+    per_head_tiers: list[dict[str, Any]]
+    duration_multipliers: dict[str, Any]
+    day_adjustments: dict[str, float]
+    season_adjustments: list[dict[str, Any]]
+    min_spend: float | None
+    notes: str | None
+    effective_from: date
+    effective_to: date | None
+    created_at: datetime
+    updated_at: datetime
+    # Populated only by GET .../pricing-rules (list_pricing_rules embeds
+    # pricing_rule_addons via PostgREST) — the 24 Jul perf pass that
+    # replaced PricingRulesTab.tsx's rules-then-N-addon-calls waterfall
+    # with one query. Every other PricingRule-returning endpoint (create/
+    # get/update/quote) leaves this empty; callers that need it should use
+    # the list endpoint.
+    pricing_rule_addons: list[PricingRuleAddon] = Field(default_factory=list)
 
 
 class QuoteRequest(BaseModel):

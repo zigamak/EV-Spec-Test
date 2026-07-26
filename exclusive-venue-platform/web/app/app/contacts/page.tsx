@@ -112,10 +112,10 @@ export default function ContactsDirectoryPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [orgData, contactData] = await Promise.all([
-        apiFetch<Organisation[]>("/organisations"),
-        apiFetch<Contact[]>("/contacts"),
-      ]);
+      const { organisations: orgData, contacts: contactData } = await apiFetch<{
+        organisations: Organisation[];
+        contacts: Contact[];
+      }>("/contacts-directory");
       setOrganisations(orgData);
       setContacts(contactData);
     } catch (err) {
@@ -752,10 +752,10 @@ function OrgDetail({
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [data, timelineData] = await Promise.all([
-        apiFetch<OrganisationSummary>(`/organisations/${organisationId}/summary`),
-        apiFetch<TimelineEntry[]>(`/organisations/${organisationId}/timeline`),
-      ]);
+      const { summary: data, timeline: timelineData } = await apiFetch<{
+        summary: OrganisationSummary;
+        timeline: TimelineEntry[];
+      }>(`/organisations/${organisationId}/detail`);
       setSummary(data);
       setTimeline(timelineData);
       setNotesDraft(data.organisation.notes ?? "");
@@ -1106,10 +1106,10 @@ function ContactDetail({
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [data, timelineData] = await Promise.all([
-        apiFetch<ContactSummary>(`/contacts/${contactId}/summary`),
-        apiFetch<TimelineEntry[]>(`/contacts/${contactId}/timeline`),
-      ]);
+      const { summary: data, timeline: timelineData } = await apiFetch<{
+        summary: ContactSummary;
+        timeline: TimelineEntry[];
+      }>(`/contacts/${contactId}/detail`);
       setSummary(data);
       setTimeline(timelineData);
     } catch (err) {

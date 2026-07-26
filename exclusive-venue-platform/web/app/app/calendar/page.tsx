@@ -72,7 +72,10 @@ export default function PortfolioCalendarPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const venues = await apiFetch<VenueWithAvailability[]>("/venues/portfolio-availability?status_filter=active");
+      const { venues, enquiries: enquiryData } = await apiFetch<{
+        venues: VenueWithAvailability[];
+        enquiries: EnquiryWithBriefs[];
+      }>("/venues/calendar-data");
       setWindows(
         venues.flatMap((venue) =>
           venue.availability
@@ -80,7 +83,7 @@ export default function PortfolioCalendarPage() {
             .map((a) => ({ ...a, venue_name: venue.name })),
         ),
       );
-      setEnquiries(await apiFetch<EnquiryWithBriefs[]>("/enquiries"));
+      setEnquiries(enquiryData);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load calendar");
     }

@@ -1,8 +1,10 @@
 """Venue Profile page support (task B3 follow-up, 18 Jul): activations,
 films, and team contacts CRUD, plus the combined `/profile` embed that
-replaces five separate round trips (venue, configurations, media,
-activations, films, team contacts) with one — same rationale as
-`/venues/portfolio` in routers/venues.py.
+replaces eight separate round trips (venue, configurations, restrictions,
+media, activations, films, team contacts, pricing rules, availability)
+with one — same rationale as `/venues/portfolio` in routers/venues.py.
+Both the Venue Profile page and the Venue Edit page (24 Jul perf pass)
+now read from this single endpoint instead of firing their own calls.
 """
 
 from typing import Annotated
@@ -50,7 +52,8 @@ def get_venue_profile(venue_id: UUID, client: ScopedClient, _: Staff):
             client.table("venues")
             .select(
                 "*, venue_media!venue_media_venue_id_fkey(*), venue_configurations(*), "
-                "venue_activations(*), venue_films(*), venue_team_contacts(*)"
+                "venue_restrictions(*), venue_activations(*), venue_films(*), "
+                "venue_team_contacts(*), pricing_rules(*), venue_availability(*)"
             )
             .eq("id", str(venue_id))
             .execute()

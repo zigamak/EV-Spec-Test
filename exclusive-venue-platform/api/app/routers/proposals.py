@@ -12,6 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from postgrest.exceptions import APIError
+from pydantic import BaseModel
 from supabase import Client
 
 from app.core import storage
@@ -27,6 +28,7 @@ from app.schemas.proposal import (
     ProposalVenueCreate,
     ProposalVenueUpdate,
 )
+from app.schemas.venue import VenueWithPortfolio
 from app.services.activity_log import log_activity
 from app.services.copy_generator import (
     generate_intro_copy,
@@ -526,6 +528,47 @@ def proposal_preview_html(proposal_id: UUID, client: ScopedClient, _: Staff):
 
 
 # --- proposal_venues -----------------------------------------------------
+
+
+class VenueOptions(BaseModel):
+    portfolio: list[VenueWithPortfolio]
+    picked: list[ProposalVenue]
+
+
+@router.get("/proposals/{proposal_id}/venue-options", response_model=VenueOptions)
+def get_proposal_venue_options(proposal_id: UUID, client: ScopedClient, _: Staff):
+    """The proposal builder (web/app/app/proposals/new/page.tsx) used to
+    fetch the active venue portfolio and this proposal's already-picked
+    venues as two separate requests, each paying its own Supabase client
+    TLS handshake (app/core/scoped_client.py). Bundled behind one request/
+    one client (24 Jul perf pass) — same embed as GET /venues/portfolio."""
+    try:
+        venues_result = (
+            client.table("venues")
+            .select("*, venue_media!venue_media_venue_id_fkey(*), venue_configurations(*)")
+            .eq("status", "active")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        picked_result = (
+            client.table("proposal_venues")
+            .select("*")
+            .eq("proposal_id", str(proposal_id))
+            .order("sort_order")
+            .execute()
+        )
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+
+    all_paths = [
+        media["storage_path"] for venue in venues_result.data for media in venue.get("venue_media", [])
+    ]
+    url_by_path = storage.signed_urls(all_paths)
+    for venue in venues_result.data:
+        for media in venue.get("venue_media", []):
+            media["url"] = url_by_path.get(media["storage_path"])
+
+    return VenueOptions(portfolio=venues_result.data, picked=picked_result.data)
 
 
 @router.get("/proposals/{proposal_id}/venues", response_model=list[ProposalVenue])

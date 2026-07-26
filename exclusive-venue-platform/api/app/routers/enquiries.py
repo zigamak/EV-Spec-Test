@@ -200,6 +200,32 @@ def list_enquiries(
     return result.data
 
 
+class EnquiriesInbox(BaseModel):
+    enquiries: list[EnquiryWithBriefs]
+    contacts: list[Contact]
+    organisations: list[Organisation]
+
+
+@router.get("/enquiries/inbox", response_model=EnquiriesInbox)
+def get_enquiries_inbox(client: ScopedClient, _: Staff):
+    """The inbox page (web/app/app/enquiries/page.tsx) used to fire
+    GET /enquiries + /contacts + /organisations as three separate requests,
+    each paying its own Supabase client TLS handshake
+    (app/core/scoped_client.py — the client is deliberately rebuilt per
+    request, not cached, to avoid a stale-pooled-connection bug). Bundling
+    the three queries behind one request/one client cuts that 3x cost to
+    1x without touching that tradeoff."""
+    try:
+        enquiries = client.table("enquiries").select("*, briefs(*)").order("created_at", desc=True).execute()
+        contacts = client.table("contacts").select("*").order("created_at", desc=True).execute()
+        organisations = client.table("organisations").select("*").order("name").execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return EnquiriesInbox(
+        enquiries=enquiries.data, contacts=contacts.data, organisations=organisations.data
+    )
+
+
 @router.post("/enquiries", response_model=Enquiry, status_code=status.HTTP_201_CREATED)
 def create_enquiry(payload: EnquiryCreate, client: ScopedClient, staff: Staff):
     # Staff-entered enquiries (manual entry, C3) always carry created_by;

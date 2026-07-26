@@ -127,12 +127,10 @@ export default function InquiriesInboxPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      apiFetch<EnquiryWithBriefs[]>("/enquiries"),
-      apiFetch<Contact[]>("/contacts"),
-      apiFetch<Organisation[]>("/organisations"),
-    ])
-      .then(([enquiries, contacts, orgs]) => {
+    apiFetch<{ enquiries: EnquiryWithBriefs[]; contacts: Contact[]; organisations: Organisation[] }>(
+      "/enquiries/inbox",
+    )
+      .then(({ enquiries, contacts, organisations: orgs }) => {
         if (cancelled) return;
         const contactsById = new Map(contacts.map((c) => [c.id, c]));
         const orgsById = new Map(orgs.map((o) => [o.id, o]));

@@ -10,11 +10,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from postgrest.exceptions import APIError
+from pydantic import BaseModel
 from supabase import Client
 
 from app.core import storage
 from app.core.auth import StaffUser, require_staff_session
 from app.core.scoped_client import get_scoped_client
+from app.schemas.enquiry import EnquiryWithBriefs
 from app.schemas.venue import (
     Venue,
     VenueAvailability,
@@ -96,6 +98,33 @@ def list_venues_with_availability(client: ScopedClient, _: Staff, status_filter:
     except APIError as exc:
         _raise_for_postgrest(exc)
     return result.data
+
+
+class CalendarData(BaseModel):
+    venues: list[VenueWithAvailability]
+    enquiries: list[EnquiryWithBriefs]
+
+
+@router.get("/calendar-data", response_model=CalendarData)
+def get_calendar_data(client: ScopedClient, _: Staff):
+    """The Portfolio Calendar page (web/app/app/calendar/page.tsx) used to
+    fetch active venues+availability, then *sequentially* await enquiries
+    — each a separate Supabase client (app/core/scoped_client.py rebuilds
+    one per request deliberately, see that file's docstring). Bundling
+    both queries behind one client/one request (24 Jul perf pass) turns
+    that into a single round trip instead of two serial ones."""
+    try:
+        venues = (
+            client.table("venues")
+            .select("*, availability:venue_availability(*)")
+            .eq("status", "active")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        enquiries = client.table("enquiries").select("*, briefs(*)").order("created_at", desc=True).execute()
+    except APIError as exc:
+        _raise_for_postgrest(exc)
+    return CalendarData(venues=venues.data, enquiries=enquiries.data)
 
 
 @router.get("/portfolio", response_model=list[VenueWithPortfolio])
