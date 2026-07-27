@@ -136,19 +136,44 @@
       — Same typecheck caveat as C3/D4/D5.
 
 ## F. Verification
+- [x] F0. `api/tests/test_landlord_payment_account.py` — real, run unit tests
+      (5 passed) for `mask_account_number`, the one genuinely pure function
+      added this product. Full suite re-run to confirm no regressions:
+      68 passed, 1 skipped (golden briefs, no API key — pre-existing,
+      unrelated), ruff clean.
 - [ ] F1. Cross-tenant denial tests: landlord A cannot see landlord B's venues,
       payment account, or pricing requests (extends the existing RLS test
       pattern from Product 1's test-security checklist).  [C1, D1, E3]
+      — **Cannot be executed in this environment**: no local Postgres/Docker
+      available, and no live Supabase credentials either. A mocked
+      table-CRUD test wouldn't actually exercise the RLS policy and would
+      give false confidence, so this is left genuinely pending rather than
+      faked — same "live-verified" convention every prior RLS test in this
+      repo (B1, C1, F1 in Product 1) already follows.
 - [ ] F2. Policy-level test: a landlord cannot set
       `pricing_rule_change_requests.status` to `'approved'` directly — not
       just an API-layer check, the RLS policy itself must reject it.  [D1]
+      — Same live-Postgres blocker as F1.
 - [ ] F3. F3-regression test: approving a pricing request produces a new
       `pricing_rules` row with correct `effective_from`, and any
       `proposal_venues` row already quoted against the prior version still
       resolves the same total.  [D3]
+      — Same live-Postgres blocker as F1.
 - [ ] F4. Invite → accept → venue assignment round-trip (Path A) and invite →
       accept → self-add venue (Path B), both verified end-to-end.  [B3, E2]
+      — Same live-Postgres blocker as F1; also needs a real Supabase Auth
+      invite to actually land (B2's live-untested caveat).
 - [ ] F5. `/verify` vs `verification.md` acceptance criteria; log verdict.  [all]
+      — Blocked on F1-F4, which are blocked on live infrastructure access.
+
+**What it would take to unblock F1-F4:** `SUPABASE_DB_URL` pointed at either
+a real Supabase project or a local Postgres with the CI workflow's
+auth-schema stub (`.github/workflows/ci.yml`'s bootstrap step), then
+`alembic upgrade head` (revisions 0025-0028) followed by creating two test
+landlord accounts and running through each scenario above by hand or via a
+pytest suite using `psycopg` directly against that instance — not
+mocked. This is infrastructure access this environment doesn't have, not
+a missing design decision.
 
 ---
 
