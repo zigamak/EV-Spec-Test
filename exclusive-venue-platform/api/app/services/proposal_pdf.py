@@ -105,7 +105,7 @@ def render_proposal_html(ctx: dict[str, Any]) -> str:
             <div class="inv-line bold"><span>Venue subtotal</span><span>{money(v['subtotal'])}</span></div>
             <div class="fee">
               <div class="fee-row"><span><strong>EVA Service Fee</strong> · {SERVICE_FEE_PCT}%</span><span>{money(v['fee'])}</span></div>
-              <div class="fee-note">Covers venue curation, contract negotiation, on-day production support, supplier coordination.</div>
+              <div class="fee-note">Covers venue curation, contract negotiation, on-day production support, vendor coordination.</div>
             </div>
           </div>
           <div class="inv-total"><div class="tk" style="color:#c9a24a">Total</div><div class="serif big">{money(v['total'])}</div></div>

@@ -1,8 +1,8 @@
 /*
  * Tier 1 — PROVISIONAL tokens (design-system/INTAKE.md).
  * Authorizes INTERNAL/ADMIN surfaces ONLY (staff app, landlord portal,
- * supplier dashboard) — never client-facing surfaces (proposal template,
- * public Concierge, public supplier directory). Those wait for tokens.css
+ * vendor dashboard) — never client-facing surfaces (proposal template,
+ * public Concierge, public vendor directory). Those wait for tokens.css
  * (Tier 2, ships once the brand kit is formally ACCEPTED — still "no" in
  * INTAKE.md as of 16 Jul).
  *

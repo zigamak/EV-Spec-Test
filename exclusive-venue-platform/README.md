@@ -24,7 +24,7 @@ This repo follows the "spec before code" discipline: every feature starts as a s
 
 - `specs/0000-foundation/` — cross-product schema (`erd.md`), RLS matrix, route architecture, shared API contracts.
 - `specs/0001-product-1-core/` — Product 1: Internal Platform (Core). Populated first; build window Weeks 1–5.
-- `specs/0002-ai-concierge/`, `specs/0003-landlord-portal/`, `specs/0004-supplier-marketplace/` — populated the week before their build starts (Weeks 5–6), same order as the Sprint Board.
+- `specs/0002-ai-concierge/`, `specs/0003-landlord-portal/`, `specs/0004-vendor-marketplace/` — populated the week before their build starts (Weeks 5–6), same order as the Sprint Board.
 - `migrations/` — incremental Alembic revisions, one per task that first needs a table. Never a single upfront migration. See `docs/stack-profile.md`.
 - `fixtures/` — golden test set. `raw/` is gitignored (real client data, HK PDPO); `anonymized/` is committed.
 - `design-system/` — two-tier token gate (`INTAKE.md`): provisional tokens unblock internal UI now; accepted tokens (from the client brand kit) gate client-facing surfaces.

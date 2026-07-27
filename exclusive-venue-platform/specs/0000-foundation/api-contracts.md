@@ -15,6 +15,6 @@ The three engines shared across products, per the AI-vs-deterministic trust boun
 - Request/response JSON shapes for each engine (internal function signatures if called in-process from FastAPI, or endpoint contracts if exposed as internal API routes).
 - Error/failure modes: low-confidence parse → `needs_review`; empty shortlist after E1; pricing rule not found for a venue/date.
 - Versioning: which `pricing_rules` row a quote pins (`effective_from`/`effective_to`), which `briefs` version a proposal pins (`proposal.brief_id`) — both per erd.md §5.
-- Consumers: Product 1 (primary), Product 2 Concierge (reuses parser + recommender + pricing, read-only path), Product 3/4 (venue and supplier data only, no engine calls).
+- Consumers: Product 1 (primary), Product 2 Concierge (reuses parser + recommender + pricing, read-only path), Product 3/4 (venue and vendor data only, no engine calls).
 
 Populate this file from the `/plan` output for `specs/0001-product-1-core/` once it references `erd.md` — see setup guide §2 step 9.

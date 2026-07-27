@@ -8,30 +8,36 @@
 
 ## 1. Design principles this schema encodes
 
-1. **One schema, four products.** Venues are written by staff (P1) and landlords (P3), read by the Concierge (P2) and proposals (P1/P2). Suppliers (P4) surface inside proposals. Everything lives in one coherent graph.
+1. **One schema, four products.** Venues are written by staff (P1) and landlords (P3), read by the Concierge (P2) and proposals (P1/P2). Vendors (P4) surface inside proposals. Everything lives in one coherent graph.
 2. **Pricing rules are data, not text.** The deterministic pricing engine reads `pricing_rules` rows; there is no free-text pricing anywhere. Schema-level enforcement of the constitution's trust boundary.
 3. **Anonymous-friendly enquiry intake.** The Concierge (P2) creates enquiries with no authenticated user. `enquiries.created_by` is nullable; identity lives in the linked `contacts` row.
-4. **Ownership paths for RLS.** Every landlord-visible row traces to `venues.landlord_id`; every supplier-visible row traces to `suppliers.owner_user_id`. No ownership path = staff-only by default.
+4. **Ownership paths for RLS.** Every landlord-visible row traces to `venues.landlord_id`; every vendor-visible row traces to `vendors.owner_user_id`. No ownership path = staff-only by default.
 5. **AI outputs are stored as reviewable artifacts.** Parsed briefs carry `confidence` and `review_status`; AI copy lives in editable columns. Nothing AI-produced is authoritative until a human or deterministic check passes it.
 6. **Deferred features get columns only where cheap.** No speculative tables for Phase 2.
 
 ## 2. Entity overview (by domain)
 
-| Identity & Access | Venue Domain | Enquiry→Proposal Pipeline | Supplier Marketplace |
-|---|---|---|---|
-| profiles | venues | contacts | suppliers |
-| user_roles | venue_configurations | organisations | supplier_media |
-| | venue_media | enquiries | supplier_tags |
-| | venue_availability | briefs | supplier_subscriptions |
-| | venue_restrictions | proposals | proposal_suppliers |
-| | pricing_rules | proposal_venues | |
-| | pricing_rule_addons | proposal_link_tokens | |
+| Identity & Access | Venue Domain | Enquiry→Proposal Pipeline | Vendor Marketplace | Shared Foundation (§6a) |
+|---|---|---|---|---|
+| profiles | venues | contacts | vendors | currencies |
+| user_roles | venue_configurations | organisations | vendor_media | landlord_payment_accounts |
+| | venue_media | enquiries | vendor_tags | pricing_rule_change_requests |
+| | venue_availability | briefs | vendor_subscriptions | landlord_invites |
+| | venue_restrictions | proposals | proposal_vendors | |
+| | pricing_rules | proposal_venues | vendor_services | |
+| | pricing_rule_addons | proposal_link_tokens | payment_methods | |
+| | | | commission_rules | |
+| | | | coupons | |
+| | | | orders | |
+| | | | payments | |
+| | | | vendor_payment_accounts | |
+| | | | payouts | |
 
 ## 3. Identity & access
 
 **`profiles`** — extends Supabase `auth.users` 1:1 (id PK = auth.users.id, full_name, phone, avatar_url). Never store auth data here.
 
-**`user_roles`** — one row per role grant: user_id FK, role CHECK IN ('staff','admin','landlord','supplier'), UNIQUE(user_id, role). A user can hold multiple roles. RLS anchor: helper `has_role(role)` checks this table; every policy uses it. Why not a role column on profiles? Multi-role users (and pilot-phase testing as all three roles) break single-column design immediately.
+**`user_roles`** — one row per role grant: user_id FK, role CHECK IN ('staff','admin','landlord','vendor','customer' — **added for Product 4, §6b: marketplace bookers who choose to create an account, deliberately a distinct term from Product 1's "clients"** — the CRM/enquiry-pipeline relationship (organisations/contacts, mostly unauthenticated, B2B-scale) — to avoid overloading vocabulary across products), UNIQUE(user_id, role). A user can hold multiple roles. RLS anchor: helper `has_role(role)` checks this table; every policy uses it. Why not a role column on profiles? Multi-role users (and pilot-phase testing as all three roles) break single-column design immediately.
 
 ## 4. Venue domain
 
@@ -148,41 +154,89 @@ Example of what a fully-populated brief now looks like (based on the real Dior e
 
 Client-context fields (tier, rate card, region) live on `organisations`, not `briefs` — they describe the client relationship, not this particular enquiry, and are already available before a brief is even parsed (see §5's `organisations` entry).
 
-## 6. Supplier marketplace (Product 4)
+## 6. Vendor marketplace (Product 4)
 
-**`suppliers`** — **owner_user_id FK (the P4 RLS ownership path)**, business_name, slug UNIQUE, category CHECK IN ('florist','catering','lighting','entertainment','av','staffing','decor','other'), description, contacts, **status** CHECK IN ('draft','pending_approval','active','suspended') — same approval-before-live mechanic as venues; suspended = lapsed subscription auto-hides listing.
+**`vendors`** — **owner_user_id FK (the P4 RLS ownership path)**, business_name, slug UNIQUE, category CHECK IN ('florist','catering','lighting','entertainment','av','staffing','decor','other'), description, contacts, **status** CHECK IN ('draft','pending_approval','active','suspended') — same approval-before-live mechanic as venues; suspended = lapsed subscription auto-hides listing. **Location & discovery fields, added for Product 4 (decided 27 Jul 2026, §6b):** address, district, city, region, **latitude/longitude nullable** (powers "vendors near me" / map-based search — nullable because a vendor can list before geocoding completes), **service_area_radius_km** nullable (how far from their base location they'll travel — distinct from `district`, which is where they're based). **SEO fields:** meta_title, meta_description (vendor-authored or AI-drafted-and-editable, same reviewable-artifact principle as proposal copy — never auto-published without a human able to edit it).
 
-**`supplier_media`** — same shape as venue_media (bucket `supplier-media`; kinds photo/video/logo).
+**`vendor_media`** — same shape as venue_media (bucket `vendor-media`; kinds photo/video/logo).
 
-**`supplier_tags`** — matching metadata: supplier_id FK CASCADE, tag (e.g. 'white-party','luxury','outdoor'), UNIQUE(supplier_id, tag).
+**`vendor_tags`** — matching metadata: vendor_id FK CASCADE, tag (e.g. 'white-party','luxury','outdoor'), UNIQUE(vendor_id, tag).
 
-**`supplier_subscriptions`** — **local mirror of Stripe state; Stripe is the source of truth, this table caches it (webhook-maintained)**: stripe_customer_id, stripe_subscription_id UNIQUE nullable (null on Checkout-link MVP before first payment), tier CHECK IN ('standard','featured') — extend when EV confirms tiers (due Aug 21) — status CHECK IN ('active','past_due','canceled','incomplete'), current_period_end. App logic: supplier visible iff subscription active AND supplier.status='active'.
+**`vendor_subscriptions`** — **local mirror of Stripe state; Stripe is the source of truth, this table caches it (webhook-maintained)**: stripe_customer_id, stripe_subscription_id UNIQUE nullable (null on Checkout-link MVP before first payment), tier CHECK IN ('standard','featured') — extend when EV confirms tiers (due Aug 21) — status CHECK IN ('active','past_due','canceled','incomplete'), current_period_end. App logic: vendor visible iff subscription active AND vendor.status='active'.
 
-**`proposal_suppliers`** — suppliers surfaced in a specific proposal (static list for P2 MVP; tag-matched from P4 onward): proposal_id FK CASCADE, supplier_id FK, sort_order.
+**`proposal_vendors`** — vendors surfaced in a specific proposal (static list for P2 MVP; tag-matched from P4 onward): proposal_id FK CASCADE, vendor_id FK, sort_order.
+
+## 6b. Marketplace transactions & vendor payments (Product 4, decided 27 Jul 2026)
+
+*Scope note, stated explicitly to avoid confusion with §9's deferral table: this engine is scoped to **marketplace vendor orders only** (a client ordering a vendor's service — florist, catering, AV, etc. — through the public directory). Named `orders`, not `bookings`, specifically to avoid colliding with the venue-side vocabulary (`venue_availability.reason='booked'`, holds) and to not read as lodging/hotel terminology. It does NOT reopen venue booking/contract/payment tracking for Product 1, which remains deferred Phase 2 exactly as §9 describes (and would, if ever built, need its own distinct name from this table too). Two different concepts; only the vendor-marketplace one is in scope now, by explicit decision overriding the general Phase-2 deferral for this piece.*
+
+**`vendor_services`** — the structured price list a vendor lists (default), with a per-service escape hatch to quote-only: id, vendor_id FK CASCADE, name, description, **pricing_type CHECK IN ('flat','per_head','per_hour','quote')** — 'quote' means no `amount` is shown, the client requests pricing instead (same soft-criteria idea as the enquiry/proposal flow, scoped down to one vendor's one service), amount nullable (must be set unless pricing_type='quote' — app-level validation, same pattern as `briefs.budget_estimate_low/high` both-or-neither), **currency FK → currencies.code** (reuses the Product 3 foundation table, not redefined here), sort_order.
+
+**`payment_methods`** — reference table, extensible, minimal today: code PK ('stripe'), name, enabled boolean. Mirrors `currencies`' "reference table now, extend later against real need" pattern — only Stripe is wired in this build, but transactions reference this table rather than a hardcoded string so adding a second method later is additive.
+
+**`commission_rules`** — the platform's service-charge ruleset, **versioned by effective_from/effective_to exactly like `pricing_rules`** (§4) so a commission-rate change never retroactively alters an already-completed order's payout math: id, **vendor_id FK nullable** (null = the platform-wide default; exactly one active default row at a time — a set value = that vendor's negotiated override), **percentage_rate** numeric, **fixed_fee** numeric, currency FK (for the fixed-fee portion), effective_from, effective_to nullable. Lookup order at order time: vendor-specific active row if one exists, else the platform default active row.
+
+**`coupons`** — discount codes, same "platform default vs vendor override" ownership shape as `commission_rules`: id, code UNIQUE, **vendor_id FK nullable** (null = platform-wide coupon, set by staff; a value = a vendor's own promo code for their listings only), **discount_type CHECK IN ('percentage','flat')**, discount_value numeric, currency FK nullable (required when discount_type='flat', null when 'percentage' — app-level both-or-neither validation, same pattern as `briefs.budget_estimate_low/high`), min_order_amount nullable, max_uses nullable (null = unlimited), uses_count NOT NULL DEFAULT 0, valid_from, valid_to nullable, status CHECK IN ('active','expired','disabled'), created_by. **Never directly SELECT-able by anon** — a code is validated and applied via an RPC at checkout (same "engine output, not raw rules" pattern `pricing_rules` already uses, §7's hard line #1), so the full coupon list is never exposed to browse.
+
+**`orders`** — a client ordering a vendor's service through the marketplace, **guest checkout by default with an optional account** (both explicitly requested — not an either/or); named `orders` rather than `bookings` to keep marketplace vendor transactions distinct from venue-side booking/hold vocabulary: id, **contact_id FK NOT NULL** (reuses `contacts`, same "most contacts never log in" shape as the enquiry pipeline — always present, guest or not), **customer_user_id FK nullable** (`auth.users`; set only if the orderer has/creates a `'customer'` role account — links this order into their order history; null for a pure guest order), vendor_id FK, vendor_service_id FK nullable (null if ordered from a quote request rather than a fixed listed service), event_date, guest_count nullable, **subtotal_amount** (pre-discount), **coupon_id FK nullable**, **discount_amount** NOT NULL DEFAULT 0 (denormalized, computed at order time from the pinned coupon — zero if none applied), **total_amount** (subtotal_amount − discount_amount — this is what's actually charged, and what commission is calculated on), currency FK, **commission_rules_id FK** (pins which ruleset priced this order — same reproducibility discipline as `proposal_venues.pricing_rules_id`), **commission_amount** (denormalized, computed at order time from the pinned ruleset, against `total_amount` post-discount), **payout_amount** (total_amount − commission_amount, denormalized), **status CHECK IN ('pending','confirmed','completed','canceled','refunded')** — 'pending' covers **ordering without payment** (a quote request or pay-later order; explicitly requested — an order can exist with zero linked `payments` rows), created_at.
+
+**`payments`** — the actual client-side money movement for an order, **fully decoupled from `orders` — optional, not mandatory at creation** (an order can sit at status='pending' indefinitely with no payment row, e.g. an accepted quote awaiting an offline deposit): id, **order_id FK CASCADE**, **payment_method FK → payment_methods.code**, stripe_payment_intent_id nullable, amount, currency FK, status CHECK IN ('pending','succeeded','failed','refunded'), paid_at.
+
+**`vendor_payment_accounts`** — vendor payout details, **payout method is a per-vendor setting, not a build-time choice**: id, vendor_id FK, **payout_method CHECK IN ('manual','stripe_connect')**, stripe_connect_account_id nullable (set only when payout_method='stripe_connect'), bank_name/account_holder_name/account_number/swift_bic nullable (set only when payout_method='manual' — same masked-display and RLS-locked treatment as `landlord_payment_accounts`, §6a, since this holds real bank data when manual), currency FK, status CHECK IN ('not_started','pending_verification','verified','active','restricted') — covers both the manual-verification lifecycle and the Stripe Connect account-status lifecycle under one field.
+
+**`payouts`** — the record of a vendor actually getting paid for a completed order: id, vendor_id FK, **order_id FK**, gross_amount, commission_amount, net_amount, currency FK, **method CHECK IN ('manual','stripe_connect')** (copied from the account's method at payout time, not a live join — a vendor could change method between orders), status CHECK IN ('pending','paid','failed'), paid_at, **paid_by** nullable (staff who executed a manual transfer; null for an automatic Stripe Connect split).
+
+> **Why both manual and Stripe Connect, as a setting rather than one build-wide choice:** the Product 3 research found Stripe Connect Express isn't self-serve for Thailand-based accounts. Rather than block the whole marketplace on that per-country nuance, `payout_method` is per-vendor — a vendor where Connect works can use it; one where it doesn't (or hasn't onboarded yet) falls back to manual, same mechanism `landlord_payment_accounts` already uses. Nothing here assumes every vendor is in the same country.
+
+## 6a. Landlord portal & shared payment/currency foundation (Product 3, decided 27 Jul 2026)
+
+*Added when Product 3's PRD was written directly (no Notion source existed yet — see `specs/0003-landlord-portal/prd.md`). Cuts its own Alembic revision(s), landing Week 6, after Product 1/2. `currencies` is placed here as shared foundation, not landlord-specific — Product 4's marketplace pricing reuses it rather than redefining currency handling per product.*
+
+**`currencies`** — reference table, code PK (e.g. 'HKD', 'THB', 'USD'), symbol, name. Replaces the free-text `'HKD'` default that `pricing_rules.currency` has carried since §4 (no CHECK constraint today, so this is additive — the column becomes an FK, not a type change). **Deliberately no exchange-rate columns in this build**: nothing in Product 3 or the current Product 4 plan converts between currencies yet, so a live/scheduled FX-rate job would be speculative infrastructure — add `exchange_rate_to_base`/`rate_updated_at` later, against a real conversion requirement, not now.
+
+**`landlord_payment_accounts`** — payout details, self-service, manual payout only (Stripe Connect explicitly deferred — see below): id, **landlord_id FK (auth.users)** — the P3 payout RLS ownership path, mirrors `venues.landlord_id`, bank_name, account_holder_name, account_number, swift_bic nullable, **currency FK → currencies.code**, status CHECK IN ('pending_verification','verified'). Landlord enters their own details on `/landlord/payouts`; staff verifies manually and flips status; actual payout execution stays a manual bank transfer outside the app, same as today, just backed by one authoritative record instead of scattered email/spreadsheet handling. Holds real bank data (unlike a Stripe-backed version, where Stripe would hold it instead) — RLS locked to owning landlord + staff, masked display (last 4 digits) anywhere except the landlord's own edit form.
+
+> **Why not Stripe Connect Express now:** researched live — Thailand-based Connect accounts can't self-serve Express onboarding (requires Stripe sales engagement), payouts are THB-only on a 7-business-day schedule, and several Connect features (top-ups, separate-charges-and-transfer) aren't supported there at all. Manual payout ships first; `landlord_payment_accounts` gains a `stripe_connect_account_id` + webhook handler later if/when self-serve onboarding is actually viable for the landlord's country — the manual version isn't thrown away, just extended.
+
+**`pricing_rule_change_requests`** — the landlord "propose, staff approves" pricing workflow, preserving the constitution's trust boundary (landlord input is never pricing-authoritative): id, venue_id FK, **pricing_rules_id FK nullable** (null = proposing a brand-new ruleset), proposed_by (landlord uid), **payload jsonb** (same shape as a `pricing_rules` row — base_rate, per_head_tiers, etc.), status CHECK IN ('pending','approved','rejected'), reviewed_by, reviewed_at, review_note. Landlords never write `pricing_rules` directly (existing `pricing_rules_landlord_select_own` policy stays read-only); staff approval on `/app/venues/[id]` is what creates/updates the real, versioned `pricing_rules` row — approval must create a *new* versioned row, never mutate one that's already been quoted, so the F3 reproducibility guarantee (§4) stays intact.
+
+**`landlord_invites`** — thin tracking layer over Supabase Auth's native `inviteUserByEmail` (admin API, service-role only, never client-reachable): id, email, invited_by FK (staff), status CHECK IN ('pending','accepted','expired'), invited_at, accepted_at. The actual account creation and email delivery is Supabase Auth's job; this table just tracks who staff invited and whether it converted, so a venue's `landlord_id` can be set once acceptance completes — whether staff assigns an existing landlord to a venue afterward (Path A) or the landlord adds their own venue post-acceptance (Path B, `venues_landlord_insert_own` policy, existing — no new mechanism).
 
 ## 7. RLS matrix (summary — full policies in `rls-matrix.md`)
 
-| Table | anon (public) | staff/admin | landlord | supplier |
+| Table | anon (public) | staff/admin | landlord | vendor |
 |---|---|---|---|---|
 | venues | SELECT where status='active' | ALL | SELECT/UPDATE own; INSERT as pending_approval only; cannot self-activate | — |
 | venue_media/configs/availability/restrictions | SELECT via active venue | ALL | ALL on own venue's rows | — |
 | pricing_rules(+addons) | **NO direct select — quotes via engine RPC only** | ALL | SELECT own venue's (no write) | — |
 | contacts / organisations | INSERT via edge function only | ALL | — | — |
 | enquiries / briefs | INSERT via edge function | ALL | — | — |
-| proposals(+venues,+suppliers) | SELECT via token RPC only | ALL | — | — |
-| suppliers/media/tags | SELECT where active AND subscription active | ALL | — | SELECT/UPDATE own; cannot self-activate |
-| supplier_subscriptions | — | ALL | — | SELECT own |
+| proposals(+venues,+vendors) | SELECT via token RPC only | ALL | — | — |
+| vendors/media/tags | SELECT where active AND subscription active | ALL | — | SELECT/UPDATE own; cannot self-activate |
+| vendor_subscriptions | — | ALL | — | SELECT own |
 | profiles / user_roles | — | ALL | SELECT own | SELECT own |
+| currencies | SELECT (public reference data) | ALL | SELECT | SELECT |
+| landlord_payment_accounts | — | ALL (masked except own edit context) | SELECT/UPDATE own | — |
+| pricing_rule_change_requests | — | ALL | SELECT/INSERT own venue's (no self-approve) | — |
+| landlord_invites | — | ALL | — | — |
+| vendor_services | SELECT where vendor active + subscribed | ALL | — | SELECT/UPDATE own |
+| payment_methods | SELECT (public reference data) | ALL | — | SELECT |
+| commission_rules | — | ALL | — | SELECT own override + platform default (no other vendor's rate) |
+| coupons | NO direct SELECT — validated/applied via RPC only | ALL | — | SELECT/INSERT own vendor-scoped coupons |
+| orders | INSERT via edge function only (guest checkout) | ALL | — | SELECT own (via vendor_id) |
+| payments | — | ALL | — | SELECT own (via order→vendor_id) |
+| vendor_payment_accounts | — | ALL (masked except own edit context) | — | SELECT/UPDATE own |
+| payouts | — | ALL | — | SELECT own |
 
 **Three deliberate hard lines:**
 
 1. **anon never reads pricing_rules** — even if a live-pricing decision lands, the public sees engine output via RPC, never the rules. Rules are EV's commercial IP. That decision = policy tweak, not schema change.
 2. **Landlords cannot write pricing or self-activate venues** — both EV-controlled gates. If EV later grants landlord pricing visibility, that's a SELECT policy change only.
-3. **Suppliers cannot self-activate** — visibility = EV approval AND active Stripe subscription, enforced in the same policy.
+3. **Vendors cannot self-activate** — visibility = EV approval AND active Stripe subscription, enforced in the same policy.
 
 ## 8. Key indexes
 
-enquiries(stage), enquiries(assigned_to), briefs(enquiry_id, version DESC), venues(status) WHERE active, venue_availability(venue_id, starts_on, ends_on), pricing_rules(venue_id, effective_from DESC), proposal_venues(proposal_id, sort_order), proposal_link_tokens(token) WHERE NOT revoked, contacts(email), suppliers(category) WHERE active.
+enquiries(stage), enquiries(assigned_to), briefs(enquiry_id, version DESC), venues(status) WHERE active, venue_availability(venue_id, starts_on, ends_on), pricing_rules(venue_id, effective_from DESC), proposal_venues(proposal_id, sort_order), proposal_link_tokens(token) WHERE NOT revoked, contacts(email), vendors(category) WHERE active.
 
 ## 9. Explicitly NOT in this schema (deferred — do not add speculatively)
 
@@ -205,7 +259,7 @@ Every deferred feature's migration path is **additive** — nothing in Phase 2 r
 4. pricing_rules → pricing_rule_addons
 5. enquiries → briefs
 6. proposals → proposal_venues → proposal_link_tokens
-7. suppliers → supplier_media → supplier_tags → supplier_subscriptions → proposal_suppliers
+7. vendors → vendor_media → vendor_tags → vendor_subscriptions → proposal_vendors
 8. Indexes (§8), then RLS policies (A2, per rls-matrix.md)
 
 ### Revision-to-task map (updated 12 Jul — tables land incrementally, not upfront)
@@ -221,7 +275,9 @@ Every deferred feature's migration path is **additive** — nothing in Phase 2 r
 | 0007 | H3 | enquiries.stage — ALTER only, remaps 8 old values to the 5-stage model (enquiry/briefed/proposed/held/signed) + lost, replaces the CHECK constraint; see §5.1 |
 | 0008 | D5 | ALTER only — standardizes `briefs` (date window + suggestions, time_of_day, budget_status + estimate range, flagged_fields/fields_to_confirm), adds 'whatsapp' to `enquiries.channel`/`contacts.source`, adds tier/rate_card_on_file/rate_card_terms/region to `organisations`, adds event_date/personal_email_copy to `proposals` |
 
-Suppliers (suppliers, supplier_media, supplier_tags, supplier_subscriptions, proposal_suppliers) are Product 4 scope — their revision is cut in Week 6 when `specs/0004-supplier-marketplace/tasks.md` is populated, not part of the Product 1 sequence above.
+Vendors (vendors, vendor_media, vendor_tags, vendor_subscriptions, proposal_vendors) are Product 4 scope — their revision is cut in Week 6 when `specs/0004-vendor-marketplace/tasks.md` is populated, not part of the Product 1 sequence above.
+
+Landlord portal additions (currencies, landlord_payment_accounts, pricing_rule_change_requests, landlord_invites — see §6a) are Product 3 scope, cut in Week 6 when `specs/0003-landlord-portal/tasks.md` is populated. `currencies` lands first since `pricing_rules.currency` and `landlord_payment_accounts.currency` both reference it.
 
 ## 11. Validation
 

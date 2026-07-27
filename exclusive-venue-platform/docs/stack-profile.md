@@ -3,7 +3,7 @@
 ## Stack
 - Frontend: Next.js (App Router, TypeScript strict) — single app, 4 UI surfaces
   via role-based routing: / (public Concierge), /app/* (staff), /landlord/*,
-  /supplier/* + public supplier directory
+  /vendor/* + public vendor directory
 - Backend: FastAPI (Python 3.12) — AI orchestration + pricing engine
 - DB/Auth/Storage: Supabase (Postgres + RLS, Auth, Storage buckets)
 - Migrations: Alembic (SQLAlchemy Core, no ORM models required) against the

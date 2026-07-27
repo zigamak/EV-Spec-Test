@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * Route/role gating (specs/0000-foundation/route-architecture.md).
  * /app/* requires a session + has_role('staff' | 'admin'). A user without
  * the matching role is redirected, not shown a 403 — avoids leaking route
- * existence. /landlord/* and /supplier/* follow the same pattern once those
+ * existence. /landlord/* and /vendor/* follow the same pattern once those
  * products land (Weeks 5-6); only /app/* exists in Product 1.
  */
 export async function middleware(request: NextRequest) {

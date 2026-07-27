@@ -14,8 +14,8 @@
       — verified live 16 Jul: two throwaway landlord accounts, landlord A
       blocked (403/404) from spoofing B's landlord_id, reading/updating/
       deleting B's venue, and self-activating their own venue.
-- [ ] RLS: supplier role scoped to own profile/subscription only
-      — N/A yet: Product 4 (supplier marketplace) tables don't exist in
+- [ ] RLS: vendor role scoped to own profile/subscription only
+      — N/A yet: Product 4 (vendor marketplace) tables don't exist in
       this repo's schema yet (Week 6 per erd.md §10). Re-check once built.
 - [x] RLS: staff role cannot be assumed by public/anon key
       — verified live 16 Jul: anon (publishable key, no session) gets 0
@@ -45,7 +45,7 @@
       (synthetic scenarios — real historical quotes still pending the
       client's pricing-spreadsheet conversion, a Sprint Board human task).
 - [ ] Stripe webhooks (product 4): signature verification present
-      — N/A yet: Product 4 (supplier marketplace/Stripe billing) isn't
+      — N/A yet: Product 4 (vendor marketplace/Stripe billing) isn't
       built in this repo yet.
 
 *Source: SDD Repo Setup Guide — Exclusive Venue §6 (Notion).*

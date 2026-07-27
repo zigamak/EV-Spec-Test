@@ -9,7 +9,7 @@ Single Next.js app, 4 surfaces via role-based routing:
 - `/` — public Concierge (Product 2, unauthenticated)
 - `/app/*` — staff (Product 1)
 - `/landlord/*` — landlord portal (Product 3)
-- `/supplier/*` + public supplier directory (Product 4)
+- `/vendor/*` + public vendor directory (Product 4)
 
 ## Product 1 route inventory (confirmed — PRD §10)
 
@@ -27,8 +27,8 @@ Single Next.js app, 4 surfaces via role-based routing:
 
 ## Middleware
 
-- `/app/*`, `/landlord/*`, `/supplier/*` require a valid Supabase Auth session; unauthenticated requests redirect to the matching login route.
-- Role gate on top of auth: `/app/*` requires `has_role('staff')` or `has_role('admin')`; `/landlord/*` requires `has_role('landlord')`; `/supplier/*` requires `has_role('supplier')`. A user without the matching role gets redirected, not a 403 page — avoids leaking route existence.
+- `/app/*`, `/landlord/*`, `/vendor/*` require a valid Supabase Auth session; unauthenticated requests redirect to the matching login route.
+- Role gate on top of auth: `/app/*` requires `has_role('staff')` or `has_role('admin')`; `/landlord/*` requires `has_role('landlord')`; `/vendor/*` requires `has_role('vendor')`. A user without the matching role gets redirected, not a 403 page — avoids leaking route existence.
 - `/` (Concierge) and `/p/[token]` never require auth; `/p/[token]` reads via RPC/edge function only (no direct client read of `proposals`, per rls-matrix.md).
 - No self-registration anywhere — accounts are created via the Supabase dashboard only (PRD §10, out-of-scope §9).
 
@@ -36,4 +36,4 @@ Single Next.js app, 4 surfaces via role-based routing:
 
 - `/` Concierge page inventory — Product 2 (Week 5)
 - `/landlord/*` page inventory — Product 3 (Week 6)
-- `/supplier/*` + public supplier directory page inventory — Product 4 (Week 6)
+- `/vendor/*` + public vendor directory page inventory — Product 4 (Week 6)
