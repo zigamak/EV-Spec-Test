@@ -15,18 +15,26 @@ from app.core.config import get_settings
 from app.core.logging_config import configure_logging
 from app.routers import (
     briefs,
+    commission_rules,
     contacts_directory,
+    coupons,
     currencies,
     dashboard,
     enquiries,
     landlord_invites,
     landlord_payment_accounts,
+    orders,
+    payment_methods,
+    payments,
+    payouts,
     pricing,
     pricing_rule_change_requests,
     proposals,
     public_proposals,
     recommendations,
     staff,
+    vendor_payment_accounts,
+    vendors,
     venue_media,
     venue_profile,
     venues,
@@ -80,6 +88,14 @@ app.include_router(currencies.router)
 app.include_router(landlord_invites.router)
 app.include_router(landlord_payment_accounts.router)
 app.include_router(pricing_rule_change_requests.router)
+app.include_router(vendors.router)
+app.include_router(payment_methods.router)
+app.include_router(commission_rules.router)
+app.include_router(coupons.router)
+app.include_router(orders.router)
+app.include_router(payments.router)
+app.include_router(vendor_payment_accounts.router)
+app.include_router(payouts.router)
 
 
 @app.get("/health")

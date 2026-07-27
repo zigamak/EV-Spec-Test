@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
     resend_webhook_secret: str = ""
+    # Product 4 marketplace payments (erd.md §6b) — client checkout via
+    # Stripe PaymentIntents. Untested live: no Stripe account/keys
+    # configured in this environment, same caveat as every AI provider key
+    # above until a real one is supplied.
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
     environment: str = "development"
 
 
