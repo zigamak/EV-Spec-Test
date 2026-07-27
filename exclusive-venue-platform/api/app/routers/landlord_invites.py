@@ -53,12 +53,11 @@ def create_landlord_invite(payload: LandlordInviteCreate, client: ScopedClient, 
             status.HTTP_502_BAD_GATEWAY, f"Failed to send invite: {exc}"
         ) from exc
 
+    body = {"email": payload.email, "invited_by": staff.user_id}
+    if payload.venue_id is not None:
+        body["venue_id"] = str(payload.venue_id)
     try:
-        result = (
-            client.table("landlord_invites")
-            .insert({"email": payload.email, "invited_by": staff.user_id})
-            .execute()
-        )
+        result = client.table("landlord_invites").insert(body).execute()
     except APIError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, exc.message) from exc
     return result.data[0]

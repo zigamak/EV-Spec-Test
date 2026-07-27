@@ -14,12 +14,12 @@ const inputStyle: React.CSSProperties = {
 /**
  * "Invite landlord" action on the staff Venue Profile (task B3). Sends a
  * Supabase Auth invite (POST /landlord-invites, app/routers/
- * landlord_invites.py) — this venue's landlord_id isn't set by this form
- * directly; per prd.md §4 Path A, staff links the invite to this venue
- * once accepted (a follow-up "assign existing landlord" step, not built
- * here — this component covers sending the invite itself).
+ * landlord_invites.py), tagged with this venue's id — migration 0029's
+ * trigger on auth.users claims venue.landlord_id automatically the
+ * moment the invite is accepted (Path A, prd.md §4), no separate
+ * "assign existing landlord" step needed.
  */
-export default function LandlordInvitePanel() {
+export default function LandlordInvitePanel({ venueId }: { venueId: string }) {
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -32,11 +32,11 @@ export default function LandlordInvitePanel() {
     try {
       const invite = await apiFetch<LandlordInvite>("/landlord-invites", {
         method: "POST",
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, venue_id: venueId }),
       });
       setSentInvites((prev) => [invite, ...prev]);
       setEmail("");
-      setMessage(`Invite sent to ${invite.email}.`);
+      setMessage(`Invite sent to ${invite.email} — this venue is auto-assigned once accepted.`);
     } catch (err) {
       setMessage(err instanceof ApiError ? err.message : "Failed to send invite");
     } finally {

@@ -743,7 +743,7 @@ export default function EditVenuePage() {
 
       <section style={{ marginTop: "var(--space-10)" }}>
         <h2 style={{ fontSize: "1.1rem" }}>Landlord access</h2>
-        <LandlordInvitePanel />
+        <LandlordInvitePanel venueId={venueId} />
       </section>
     </main>
   );

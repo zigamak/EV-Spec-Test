@@ -16,12 +16,18 @@ class LandlordInviteCreate(BaseModel):
     # codebase (enquiry.py's contact email fields) — no email-validator
     # dependency in api/requirements.txt to add just for this one field.
     email: str = Field(min_length=3)
+    # Path A (prd.md §4): ties this invite to a specific venue so the
+    # 0029 auth.users trigger can claim venue.landlord_id automatically
+    # once the invite is accepted. Omitted entirely for a venue-less
+    # invite (Path B — landlord adds their own venue after accepting).
+    venue_id: UUID | None = None
 
 
 class LandlordInvite(BaseModel):
     id: UUID
     email: str
     invited_by: UUID
+    venue_id: UUID | None
     status: InviteStatus
     invited_at: datetime
     accepted_at: datetime | None

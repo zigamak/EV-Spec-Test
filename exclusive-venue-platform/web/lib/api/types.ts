@@ -716,6 +716,7 @@ export interface LandlordInvite {
   id: string;
   email: string;
   invited_by: string;
+  venue_id: string | null;
   status: LandlordInviteStatus;
   invited_at: string;
   accepted_at: string | null;
@@ -723,6 +724,7 @@ export interface LandlordInvite {
 
 export interface LandlordInviteCreate {
   email: string;
+  venue_id?: string | null;
 }
 
 export type PaymentAccountStatus = "pending_verification" | "verified";

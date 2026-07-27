@@ -48,12 +48,21 @@
       task, not done here.
 - [x] B3. "Invite landlord" action on the existing staff Venue edit page
       (`web/app/app/venues/[id]/edit/page.tsx`, `components/
-      LandlordInvitePanel.tsx`) — email input, calls B2. **Partial:** sends
-      the invite; does not yet auto-link it to this specific venue on
-      acceptance (Path A's "assign an existing/newly-accepted landlord to
-      this venue" step is a small follow-up — the invite exists and works,
-      the venue-assignment convenience wiring on top of it doesn't yet).
-      [B2]
+      LandlordInvitePanel.tsx`) — email input, calls B2, tags the invite
+      with this venue's id. **No longer partial** — migration `0029`
+      (below) closes the auto-link gap.  [B2]
+- [x] B4. **Alembic revision `0029_landlord_invite_auto_link.py`:**
+      `landlord_invites.venue_id` (nullable FK) + a trigger on `auth.users`
+      (`handle_landlord_invite_acceptance()`) that fires the moment a
+      Supabase Auth invite is accepted — grants the `landlord` role, marks
+      the invite accepted, and claims `venues.landlord_id` for the tied
+      venue (only if still unclaimed, race-safe). This is the one place in
+      the whole product where a Postgres trigger, not FastAPI, is the only
+      thing that can observe the event at all — invite acceptance happens
+      entirely inside Supabase Auth. Also patches `.github/workflows/
+      ci.yml`'s minimal `auth.users` stub to add an `email` column, which
+      the trigger function reads.  [B1]
+      — Written, ruff-clean. Not yet applied live.
 
 ## C. Landlord Payment Account (manual only — Stripe Connect explicitly deferred)
 - [x] C1. **Alembic revision `0027_landlord_payment_accounts.py`:**
