@@ -21,7 +21,7 @@ from app.core.admin_client import get_admin_client
 from app.core.auth import StaffUser, require_staff_session
 from app.core.config import get_settings
 from app.core.scoped_client import get_scoped_client
-from app.schemas.payment import Payment, PaymentCreate
+from app.schemas.payment import Payment, PaymentCreate, PaymentWithClientSecret
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
@@ -29,7 +29,7 @@ ScopedClient = Annotated[Client, Depends(get_scoped_client)]
 Caller = Annotated[StaffUser, Depends(require_staff_session)]
 
 
-@router.post("", response_model=Payment, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=PaymentWithClientSecret, status_code=status.HTTP_201_CREATED)
 def create_payment(payload: PaymentCreate):
     """Public — a guest completing checkout has no session. Creates a
     Stripe PaymentIntent for the order's amount and records a 'pending'
@@ -64,7 +64,7 @@ def create_payment(payload: PaymentCreate):
         )
         .execute()
     )
-    return result.data[0]
+    return {**result.data[0], "client_secret": intent.client_secret}
 
 
 @router.post("/webhook", status_code=status.HTTP_200_OK)

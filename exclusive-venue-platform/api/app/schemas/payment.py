@@ -29,3 +29,11 @@ class Payment(BaseModel):
     status: PaymentStatus
     paid_at: datetime | None
     created_at: datetime
+
+
+class PaymentWithClientSecret(Payment):
+    """Only ever returned once, at creation time — Stripe's client_secret
+    is what the frontend needs to actually collect a card (stripe.js'
+    confirmPayment), and isn't persisted in the payments table itself."""
+
+    client_secret: str

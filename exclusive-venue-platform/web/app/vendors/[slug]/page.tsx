@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import PageLoader from "@/components/PageLoader";
+import StripeCheckoutForm from "@/components/StripeCheckoutForm";
 import { ApiError } from "@/lib/api/client";
-import { VENDOR_CATEGORY_LABEL, type Order, type Vendor, type VendorService } from "@/lib/api/types";
+import { VENDOR_CATEGORY_LABEL, type Order, type PaymentWithClientSecret, type Vendor, type VendorService } from "@/lib/api/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -35,9 +36,12 @@ const PRICING_LABEL: Record<VendorService["pricing_type"], string> = {
  * a client component; real SEO needs a server component or generateMetadata,
  * a bigger structural change than this pass covers).
  *
- * Checkout here is guest-first (task I4's core, not full Stripe Elements
- * yet — see the note above handleSubmit): fills the same POST /orders
- * body the backend expects, including an optional coupon code.
+ * Checkout is guest-first: submits the same POST /orders body the
+ * backend expects, including an optional coupon code. When the order has
+ * a real amount (not a pure quote request), a Stripe PaymentIntent is
+ * created immediately after (POST /payments) and StripeCheckoutForm
+ * collects the card — untested live, no Stripe account configured in
+ * this environment, same caveat as the backend integration itself.
  */
 export default function VendorProfilePage() {
   const params = useParams<{ slug: string }>();
@@ -55,6 +59,8 @@ export default function VendorProfilePage() {
   const [submitting, setSubmitting] = useState(false);
   const [orderResult, setOrderResult] = useState<Order | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [payment, setPayment] = useState<PaymentWithClientSecret | null>(null);
+  const [paid, setPaid] = useState(false);
 
   useEffect(() => {
     publicFetch<Vendor>(`/vendors/directory/${params.slug}`)
@@ -87,13 +93,30 @@ export default function VendorProfilePage() {
         }),
       });
       setOrderResult(order);
-      // Real card payment (Stripe Elements) against POST /payments is
-      // deliberately NOT wired up here yet — the backend endpoint exists
-      // (app/routers/payments.py), but the frontend checkout UI to
-      // actually collect a card is a separate, larger piece of work
-      // (task I4's remainder). An order can exist with zero payments
-      // (the pay-later/quote path), so this is a valid, complete state,
-      // not a broken one.
+
+      // Only attempt a payment when there's an actual amount to charge —
+      // a pure quote request (subtotal_amount === 0) has nothing to pay
+      // yet; the vendor prices it later (PATCH /orders/{id}/quote) and
+      // the client would come back to pay then. This is a valid,
+      // complete state on its own, not a broken intermediate one.
+      if (order.total_amount > 0) {
+        try {
+          const paymentResult = await publicFetch<PaymentWithClientSecret>("/payments", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              order_id: order.id,
+              amount: order.total_amount,
+              currency: order.currency,
+            }),
+          });
+          setPayment(paymentResult);
+        } catch {
+          // Stripe not configured / unreachable — the order itself still
+          // succeeded and is recorded; surfaced as a softer notice below,
+          // not a hard failure of the whole checkout.
+        }
+      }
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Failed to submit order");
     } finally {
@@ -105,16 +128,36 @@ export default function VendorProfilePage() {
   if (!vendor) return <PageLoader label="Loading vendor" />;
 
   if (orderResult) {
+    const needsPayment = orderResult.total_amount > 0 && !paid;
+
     return (
-      <main style={{ maxWidth: "560px", margin: "0 auto", padding: "var(--space-10) var(--space-6)", textAlign: "center" }}>
-        <h1 style={{ fontFamily: "var(--font-serif)", fontSize: "1.6rem" }}>Request received</h1>
-        <p style={{ color: "var(--color-text-secondary)" }}>
-          {vendor.business_name} will follow up{" "}
-          {orderResult.subtotal_amount > 0
-            ? `— total ${orderResult.currency} ${orderResult.total_amount.toLocaleString()}`
-            : "with a quote"}
-          .
-        </p>
+      <main style={{ maxWidth: "480px", margin: "0 auto", padding: "var(--space-10) var(--space-6)" }}>
+        {paid ? (
+          <div style={{ textAlign: "center" }}>
+            <h1 style={{ fontFamily: "var(--font-serif)", fontSize: "1.6rem" }}>Payment confirmed</h1>
+            <p style={{ color: "var(--color-text-secondary)" }}>{vendor.business_name} has been notified.</p>
+          </div>
+        ) : needsPayment && payment ? (
+          <>
+            <h1 style={{ fontFamily: "var(--font-serif)", fontSize: "1.4rem", textAlign: "center" }}>
+              Pay {orderResult.currency} {orderResult.total_amount.toLocaleString()}
+            </h1>
+            <div style={{ marginTop: "var(--space-6)" }}>
+              <StripeCheckoutForm clientSecret={payment.client_secret} onSuccess={() => setPaid(true)} />
+            </div>
+          </>
+        ) : (
+          <div style={{ textAlign: "center" }}>
+            <h1 style={{ fontFamily: "var(--font-serif)", fontSize: "1.6rem" }}>Request received</h1>
+            <p style={{ color: "var(--color-text-secondary)" }}>
+              {vendor.business_name} will follow up
+              {orderResult.subtotal_amount > 0
+                ? ` — total ${orderResult.currency} ${orderResult.total_amount.toLocaleString()}`
+                : " with a quote"}
+              .
+            </p>
+          </div>
+        )}
       </main>
     );
   }

@@ -1206,6 +1206,17 @@ export interface Payment {
   paid_at: string | null;
 }
 
+export interface PaymentWithClientSecret extends Payment {
+  client_secret: string;
+}
+
+export interface PaymentCreate {
+  order_id: string;
+  payment_method?: string;
+  amount: number;
+  currency: string;
+}
+
 export type VendorPayoutMethod = "manual" | "stripe_connect";
 export type VendorPaymentAccountStatus =
   | "not_started"

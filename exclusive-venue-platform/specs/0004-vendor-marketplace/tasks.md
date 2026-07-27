@@ -131,13 +131,23 @@
       directory and `/vendors/[slug]` pages, since "/vendors" starts with
       "/vendor". Guarded against in both files (see their inline
       comments) — this was caught during review, not shipped broken.
-- [x] I4. Checkout core (guest-first, optional coupon field) is built as
-      part of I2. **Not built**: actual Stripe Elements/Checkout card
-      entry — `POST /payments` (G2) exists and creates a real
-      PaymentIntent, but nothing in the frontend calls it yet. An order
-      submitted through the current checkout form is valid and complete
-      as a pay-later/quote-request state (explicitly a first-class state
-      per erd.md §6b), it just can't take a card today.  [F3, G2]
+- [x] I4. Checkout core (guest-first, optional coupon field, task I2) +
+      **real card entry**: `web/components/StripeCheckoutForm.tsx`
+      (Stripe's PaymentElement + `confirmPayment`), wired into
+      `/vendors/[slug]` — when the order has a real amount, `POST
+      /payments` is called immediately after order creation to get a
+      `client_secret`, and the checkout page switches to the payment
+      form. Added `PaymentWithClientSecret` (backend schema + frontend
+      type) since Stripe's client_secret is only ever returned once, at
+      creation time, never persisted. Added `@stripe/stripe-js` +
+      `@stripe/react-stripe-js` to `package.json`, and
+      `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`/`STRIPE_SECRET_KEY`/
+      `STRIPE_WEBHOOK_SECRET` to both `.env.example` files.
+      — **Untested against a live Stripe account** — same caveat as the
+      rest of the Stripe integration (G2). A quote-request order
+      (`total_amount === 0`) correctly skips payment entirely and shows
+      the "will follow up" state instead — a deliberate branch, not a
+      missed case.  [F3, G2]
 - [x] I5. Staff-side addition: new `/app/vendors` page (`web/app/app/
       vendors/page.tsx`, added to the Inventory nav section in `layout.tsx`)
       — pending-approval queue with an Approve action, an all-vendors
