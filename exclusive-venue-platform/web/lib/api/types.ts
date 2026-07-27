@@ -988,3 +988,266 @@ export interface DashboardSummary {
   venue_performance: VenuePerformanceRow[];
   workload: WorkloadRow[];
 }
+
+// --- Product 4: Vendor Marketplace (erd.md §6, §6b) ---------------------
+
+export type VendorCategory =
+  | "florist"
+  | "catering"
+  | "lighting"
+  | "entertainment"
+  | "av"
+  | "staffing"
+  | "decor"
+  | "other";
+export type VendorStatus = "draft" | "pending_approval" | "active" | "suspended";
+export type VendorMediaKind = "photo" | "video" | "logo";
+export type VendorServicePricingType = "flat" | "per_head" | "per_hour" | "quote";
+
+export const VENDOR_CATEGORIES: VendorCategory[] = [
+  "florist",
+  "catering",
+  "lighting",
+  "entertainment",
+  "av",
+  "staffing",
+  "decor",
+  "other",
+];
+
+export const VENDOR_CATEGORY_LABEL: Record<VendorCategory, string> = {
+  florist: "Florist",
+  catering: "Catering",
+  lighting: "Lighting",
+  entertainment: "Entertainment",
+  av: "AV",
+  staffing: "Staffing",
+  decor: "Decor",
+  other: "Other",
+};
+
+export interface Vendor {
+  id: string;
+  owner_user_id: string;
+  business_name: string;
+  slug: string;
+  category: VendorCategory;
+  description: string | null;
+  contacts: string | null;
+  address: string | null;
+  district: string | null;
+  city: string | null;
+  region: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  service_area_radius_km: number | null;
+  meta_title: string | null;
+  meta_description: string | null;
+  status: VendorStatus;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorCreate {
+  business_name: string;
+  slug: string;
+  category: VendorCategory;
+  description?: string | null;
+  contacts?: string | null;
+  address?: string | null;
+  district?: string | null;
+  city?: string | null;
+  region?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  service_area_radius_km?: number | null;
+  meta_title?: string | null;
+  meta_description?: string | null;
+  owner_user_id?: string | null;
+  status?: VendorStatus;
+}
+
+export interface VendorUpdate {
+  business_name?: string;
+  slug?: string;
+  category?: VendorCategory;
+  description?: string | null;
+  contacts?: string | null;
+  address?: string | null;
+  district?: string | null;
+  city?: string | null;
+  region?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  service_area_radius_km?: number | null;
+  meta_title?: string | null;
+  meta_description?: string | null;
+  status?: VendorStatus;
+}
+
+export interface VendorService {
+  id: string;
+  vendor_id: string;
+  name: string;
+  description: string | null;
+  pricing_type: VendorServicePricingType;
+  amount: number | null;
+  currency: string;
+  sort_order: number;
+}
+
+export interface VendorServiceCreate {
+  name: string;
+  description?: string | null;
+  pricing_type: VendorServicePricingType;
+  amount?: number | null;
+  currency?: string;
+  sort_order?: number;
+}
+
+export interface PaymentMethod {
+  code: string;
+  name: string;
+  enabled: boolean;
+}
+
+export interface CommissionRule {
+  id: string;
+  vendor_id: string | null;
+  percentage_rate: number;
+  fixed_fee: number;
+  currency: string;
+  effective_from: string;
+  effective_to: string | null;
+}
+
+export type DiscountType = "percentage" | "flat";
+export type CouponStatus = "active" | "expired" | "disabled";
+
+export interface Coupon {
+  id: string;
+  code: string;
+  vendor_id: string | null;
+  discount_type: DiscountType;
+  discount_value: number;
+  currency: string | null;
+  min_order_amount: number | null;
+  max_uses: number | null;
+  uses_count: number;
+  valid_from: string;
+  valid_to: string | null;
+  status: CouponStatus;
+  created_by: string;
+}
+
+export interface CouponCreate {
+  code: string;
+  vendor_id?: string | null;
+  discount_type: DiscountType;
+  discount_value: number;
+  currency?: string | null;
+  min_order_amount?: number | null;
+  max_uses?: number | null;
+  valid_to?: string | null;
+}
+
+export interface CouponValidateResponse {
+  valid: boolean;
+  discount_amount: number;
+  message: string | null;
+}
+
+export type OrderStatus = "pending" | "confirmed" | "completed" | "canceled" | "refunded";
+
+export interface Order {
+  id: string;
+  contact_id: string;
+  customer_user_id: string | null;
+  vendor_id: string;
+  vendor_service_id: string | null;
+  event_date: string | null;
+  guest_count: number | null;
+  subtotal_amount: number;
+  coupon_id: string | null;
+  discount_amount: number;
+  total_amount: number;
+  currency: string;
+  commission_rules_id: string;
+  commission_amount: number;
+  payout_amount: number;
+  status: OrderStatus;
+  created_at: string;
+}
+
+export interface OrderCreate {
+  full_name: string;
+  email: string;
+  phone?: string | null;
+  vendor_id: string;
+  vendor_service_id?: string | null;
+  event_date?: string | null;
+  guest_count?: number | null;
+  coupon_code?: string | null;
+  customer_user_id?: string | null;
+}
+
+export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded";
+
+export interface Payment {
+  id: string;
+  order_id: string;
+  payment_method: string;
+  stripe_payment_intent_id: string | null;
+  amount: number;
+  currency: string;
+  status: PaymentStatus;
+  paid_at: string | null;
+}
+
+export type VendorPayoutMethod = "manual" | "stripe_connect";
+export type VendorPaymentAccountStatus =
+  | "not_started"
+  | "pending_verification"
+  | "verified"
+  | "active"
+  | "restricted";
+
+export interface VendorPaymentAccount {
+  id: string;
+  vendor_id: string;
+  payout_method: VendorPayoutMethod;
+  stripe_connect_account_id: string | null;
+  bank_name: string | null;
+  account_holder_name: string | null;
+  account_number: string | null;
+  swift_bic: string | null;
+  currency: string;
+  status: VendorPaymentAccountStatus;
+}
+
+export interface VendorPaymentAccountUpsert {
+  payout_method?: VendorPayoutMethod;
+  stripe_connect_account_id?: string | null;
+  bank_name?: string | null;
+  account_holder_name?: string | null;
+  account_number?: string | null;
+  swift_bic?: string | null;
+  currency: string;
+}
+
+export type PayoutStatus = "pending" | "paid" | "failed";
+
+export interface Payout {
+  id: string;
+  vendor_id: string;
+  order_id: string;
+  gross_amount: number;
+  commission_amount: number;
+  net_amount: number;
+  currency: string;
+  method: VendorPayoutMethod;
+  status: PayoutStatus;
+  paid_at: string | null;
+}

@@ -38,6 +38,12 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isStaffRoute = pathname.startsWith("/app") && pathname !== "/app/login";
   const isLandlordRoute = pathname.startsWith("/landlord") && pathname !== "/landlord/login";
+  // NOT startsWith("/vendor") — that would also match the PUBLIC
+  // /vendors directory and /vendors/[slug] profile pages, which must
+  // stay unauthenticated. The private vendor dashboard is singular
+  // (/vendor/*), the public marketplace is plural (/vendors).
+  const isVendorRoute =
+    (pathname === "/vendor" || pathname.startsWith("/vendor/")) && pathname !== "/vendor/login";
 
   if (isStaffRoute && !user) {
     const loginUrl = new URL("/app/login", request.url);
@@ -78,9 +84,30 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // /vendor/* (the private dashboard) requires has_role('vendor'). Same
+  // redirect-not-403 rule; /vendors and /vendors/[slug] (public) are
+  // untouched by this middleware entirely — not in the matcher below.
+  if (isVendorRoute && !user) {
+    const loginUrl = new URL("/vendor/login", request.url);
+    loginUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  if (isVendorRoute && user) {
+    const { data: roles } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .eq("role", "vendor");
+
+    if (!roles || roles.length === 0) {
+      return NextResponse.redirect(new URL("/vendor/login", request.url));
+    }
+  }
+
   return response;
 }
 
 export const config = {
-  matcher: ["/app/:path*", "/landlord/:path*"],
+  matcher: ["/app/:path*", "/landlord/:path*", "/vendor/:path*"],
 };

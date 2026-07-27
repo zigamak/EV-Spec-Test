@@ -104,27 +104,54 @@
 - [x] H4. `app/routers/payouts.py`: staff-only create (computed from the
       order's stored totals, not recalculated) + mark-paid.  [H3]
 
-## I. Frontend (NOT STARTED)
-- [ ] I1. Public vendor directory (`/vendors`) — browse/filter by
-      category/location/price. SEO-critical, should be server-rendered,
-      not the client-fetched pattern the rest of this app uses.  [A2]
-- [ ] I2. Public vendor profile (`/vendors/[slug]`) — full profile,
-      services, media.  [A2, B2]
-- [ ] I3. Vendor dashboard (`/vendor/*`): login, own profile/services
-      management, orders list, payouts, coupons. Mirrors the `/landlord/*`
-      pattern from Product 3 closely enough that those pages are the
-      right starting point to adapt, not a from-scratch design.  [A2, B2,
-      F3, H2, E3]
-- [ ] I4. Checkout flow on the vendor profile page — guest-first, optional
-      account creation, coupon field, Stripe Elements/Checkout integration
-      for the actual card entry (not built at all yet — G2's PaymentIntent
-      creation exists, nothing calls it from the frontend).  [F3, G2]
-- [ ] I5. Staff-side additions to `/app/*`: vendor approval queue,
-      commission-override review, platform-wide coupon management,
-      cross-vendor order/payout visibility. None of this exists yet.  [A2,
-      D3, E3, F3]
+## I. Frontend
+- [x] I1. Public vendor directory (`/vendors`, `web/app/vendors/page.tsx`)
+      — browse/filter by category + district (derived client-side from
+      the loaded set). **Not server-rendered** — this is a client
+      component using a plain `fetch`, same as the rest of this app's
+      pattern, not the SEO-optimal approach a real launch would want
+      (Next's `generateMetadata`/server components). Flagged, not
+      silently accepted as done-done.  [A2]
+- [x] I2. Public vendor profile (`/vendors/[slug]/page.tsx`) — profile,
+      services list, and the checkout form (folds in I4's guest-checkout
+      core). Added `GET /vendors/directory/{slug}` to the backend to
+      support this (wasn't in the original router). Same SEO caveat as
+      I1 — `meta_title`/`meta_description` exist on the schema but aren't
+      wired into Next's `<head>` yet.  [A2, B2]
+- [x] I3. Vendor dashboard (`/vendor/*`): `login`, dashboard home (own
+      profile edit + services management + apply-if-none-exists flow),
+      `orders` (including pricing a quote request), `payouts` (payout
+      method as a real per-vendor choice — manual fields shown/hidden by
+      selection), `coupons` (vendor-scoped only, RLS-enforced). Adapted
+      directly from `/landlord/*`'s pages, as anticipated.  [A2, B2, F3,
+      H2, E3]
+      — `web/middleware.ts` and `lib/api/client.ts` updated for the
+      `/vendor/*` surface — **with an explicit boundary fix**: a naive
+      `startsWith("/vendor")` would have also gated the PUBLIC `/vendors`
+      directory and `/vendors/[slug]` pages, since "/vendors" starts with
+      "/vendor". Guarded against in both files (see their inline
+      comments) — this was caught during review, not shipped broken.
+- [x] I4. Checkout core (guest-first, optional coupon field) is built as
+      part of I2. **Not built**: actual Stripe Elements/Checkout card
+      entry — `POST /payments` (G2) exists and creates a real
+      PaymentIntent, but nothing in the frontend calls it yet. An order
+      submitted through the current checkout form is valid and complete
+      as a pay-later/quote-request state (explicitly a first-class state
+      per erd.md §6b), it just can't take a card today.  [F3, G2]
+- [x] I5. Staff-side addition: new `/app/vendors` page (`web/app/app/
+      vendors/page.tsx`, added to the Inventory nav section in `layout.tsx`)
+      — pending-approval queue with an Approve action, an all-vendors
+      list, and platform-wide coupon creation/listing. **Not built**:
+      commission-override review UI (staff can already do this via
+      `POST /commission-rules` directly, just no dedicated screen) and a
+      dedicated cross-vendor order/payout browsing UI (staff already has
+      full data access via `GET /orders`/`GET /payouts`, RLS grants ALL,
+      just no page for it yet).  [A2, D3, E3, F3]
 - [ ] I6. Optional customer account pages (`/account/orders`) for orderers
-      who create a `'customer'`-role account.  [F3]
+      who create a `'customer'`-role account. **Not built at all** —
+      guest checkout (I2/I4) covers the required "book without an
+      account" path; the optional-account enhancement itself is still
+      open.  [F3]
 
 ## J. Verification
 - [x] J1. Real unit tests for the two genuinely pure functions added this
@@ -145,9 +172,13 @@
 
 ---
 
-**What's built vs. what's left, in one line:** the entire backend (A-H) is
-written, ruff-clean, and has every pure-function piece unit-tested — but
-none of it has run against a live database, and the ENTIRE frontend (I)
-is unbuilt. This is a much earlier stopping point than Product 3, which
-has both backend and frontend done. Product 4's frontend is a genuinely
-large remaining unit of work, not a quick follow-up.
+**What's built vs. what's left, in one line:** backend (A-H) and frontend
+(I) are both substantially built now — public directory, public profile
++ guest checkout, full vendor dashboard, and a staff vendor-approval
+page all exist. What's genuinely left: real Stripe card entry in the
+checkout UI (I4), server-rendered SEO for the public pages (I1/I2),
+dedicated staff screens for commission overrides and cross-vendor
+order/payout browsing (I5 — the data access already works, just no UI),
+optional customer accounts (I6), and all of J2/J3 (live-database
+verification, blocked on infrastructure access this environment doesn't
+have, same as Product 3).

@@ -72,6 +72,26 @@ def public_vendor_directory(category: str | None = None, district: str | None = 
     return [{k: v for k, v in row.items() if k != "vendor_subscriptions"} for row in result.data]
 
 
+@router.get("/directory/{slug}", response_model=Vendor)
+def public_vendor_by_slug(slug: str):
+    """Public single-vendor lookup for the /vendors/[slug] profile page —
+    same active+subscribed scoping as the directory listing above, admin
+    client for the same trivial-public-read reason."""
+    client = get_admin_client()
+    result = (
+        client.table("vendors")
+        .select("*, vendor_subscriptions!inner(status)")
+        .eq("slug", slug)
+        .eq("status", "active")
+        .eq("vendor_subscriptions.status", "active")
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vendor not found")
+    row = result.data[0]
+    return {k: v for k, v in row.items() if k != "vendor_subscriptions"}
+
+
 @router.get("", response_model=list[Vendor])
 def list_vendors(client: ScopedClient, _: Caller):
     """RLS-scoped: staff sees all, a vendor caller sees only their own row

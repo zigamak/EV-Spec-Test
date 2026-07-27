@@ -49,13 +49,25 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
 
 /** Bounce to login (preserving where we were) rather than surfacing a
  * confusing inline "invalid session" when the token is gone/expired.
- * Surface-aware (task E1): a /landlord/* page bounces to /landlord/login,
- * not /app/login — the two roles' sessions/logins are entirely separate. */
+ * Surface-aware: a /landlord/* or /vendor/* page bounces to its own
+ * login, not /app/login — three roles, three entirely separate sessions.
+ * Guarded against /vendor/* also matching the public /vendors/* pages
+ * (see middleware.ts's same boundary note) — a public marketplace page
+ * should never redirect to a login at all. */
 function redirectToLogin(): void {
   if (typeof window === "undefined") return;
   const { pathname } = window.location;
-  if (pathname.startsWith("/app/login") || pathname.startsWith("/landlord/login")) return;
-  const loginPath = pathname.startsWith("/landlord") ? "/landlord/login" : "/app/login";
+  if (
+    pathname.startsWith("/app/login") ||
+    pathname.startsWith("/landlord/login") ||
+    pathname.startsWith("/vendor/login") ||
+    pathname.startsWith("/vendors") // public directory/profile — never gated
+  ) {
+    return;
+  }
+  let loginPath = "/app/login";
+  if (pathname.startsWith("/landlord")) loginPath = "/landlord/login";
+  else if (pathname === "/vendor" || pathname.startsWith("/vendor/")) loginPath = "/vendor/login";
   const redirect = encodeURIComponent(pathname + window.location.search);
   window.location.href = `${loginPath}?redirect=${redirect}`;
 }
