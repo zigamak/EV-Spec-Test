@@ -6,6 +6,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import PageLoader from "@/components/PageLoader";
 import PricingRulesTab from "@/components/PricingRulesTab";
+import LandlordInvitePanel from "@/components/LandlordInvitePanel";
+import PricingRequestsReviewPanel from "@/components/PricingRequestsReviewPanel";
 import {
   FILM_STATUS_LABEL,
   RESTRICTION_KINDS,
@@ -732,6 +734,16 @@ export default function EditVenuePage() {
       <section style={{ marginTop: "var(--space-10)" }}>
         <h2 style={{ fontSize: "1.1rem" }}>Pricing rules</h2>
         <PricingRulesTab venueId={venueId} />
+      </section>
+
+      <section style={{ marginTop: "var(--space-10)" }}>
+        <h2 style={{ fontSize: "1.1rem" }}>Landlord pricing requests</h2>
+        <PricingRequestsReviewPanel venueId={venueId} />
+      </section>
+
+      <section style={{ marginTop: "var(--space-10)" }}>
+        <h2 style={{ fontSize: "1.1rem" }}>Landlord access</h2>
+        <LandlordInvitePanel />
       </section>
     </main>
   );

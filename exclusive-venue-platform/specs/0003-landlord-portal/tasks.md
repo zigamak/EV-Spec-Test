@@ -46,10 +46,14 @@
       needs a real run to confirm. Branded email template (Supabase's
       customizable Invite User template) is still a separate content/design
       task, not done here.
-- [ ] B3. "Invite landlord" action on the existing staff Venue Profile
-      (`/app/venues/[id]`) — email input, calls B2, optionally links the
-      invite to this specific venue (Path A in `prd.md` §4) so `landlord_id`
-      gets set automatically once accepted.  [B2]
+- [x] B3. "Invite landlord" action on the existing staff Venue edit page
+      (`web/app/app/venues/[id]/edit/page.tsx`, `components/
+      LandlordInvitePanel.tsx`) — email input, calls B2. **Partial:** sends
+      the invite; does not yet auto-link it to this specific venue on
+      acceptance (Path A's "assign an existing/newly-accepted landlord to
+      this venue" step is a small follow-up — the invite exists and works,
+      the venue-assignment convenience wiring on top of it doesn't yet).
+      [B2]
 
 ## C. Landlord Payment Account (manual only — Stripe Connect explicitly deferred)
 - [x] C1. **Alembic revision `0027_landlord_payment_accounts.py`:**
@@ -65,7 +69,12 @@
       [C1]
       — Not verified against a live API process (no `fastapi` installed in
       this environment's interpreter — see A2's same caveat).
-- [ ] C3. UI: `/landlord/payouts` — self-service bank detail entry form.  [C2, E-group login/middleware]
+- [x] C3. UI: `/landlord/payouts` — self-service bank detail entry form
+      (`web/app/landlord/payouts/page.tsx`), currency dropdown sourced from
+      `GET /currencies`.  [C2, E-group login/middleware]
+      — Not run through `tsc`/`npm run typecheck` — no `node_modules`
+      installed in this environment. Manually checked against the API
+      contract (route paths, field names) instead.
 
 ## D. Pricing: Propose, Don't Write
 - [x] D1. **Alembic revision `0028_pricing_rule_change_requests.py`:** table +
@@ -91,25 +100,40 @@
       `app/routers/pricing_rule_change_requests.py`.  [D2]
       — Not verified against a live API process (same environment caveat as
       A2/C2).
-- [ ] D4. UI: Pricing tab on `/landlord/venues/[id]` — view live `pricing_rules`
-      (read-only), submit/edit a pending request.  [D2]
-- [ ] D5. UI: pricing-request review queue/tab added to the existing staff
-      `/app/venues/[id]` — approve/reject action.  [D3]
+- [x] D4. UI: Pricing tab on `/landlord/venues/[id]` — view live `pricing_rules`
+      (read-only), submit a pending request (base rate/currency/effective
+      date only — the full jsonb tier/multiplier editor a landlord could use
+      is a follow-up, matching how much of `PricingRulesTab.tsx`'s
+      complexity is actually needed for a first proposal).  [D2]
+      — Same typecheck caveat as C3.
+- [x] D5. UI: pricing-request review queue added to the existing staff
+      `/app/venues/[id]/edit` page (`components/PricingRequestsReviewPanel.tsx`,
+      new section below the existing Pricing rules tab) — approve/reject
+      action.  [D3]
+      — Same typecheck caveat as C3.
 
 ## E. Landlord Portal Core (auth + venue self-management)
-- [ ] E1. `/landlord/login` + middleware role gate (`has_role('landlord')`,
-      redirect not 403 on mismatch — matches the existing `/app/*` pattern in
-      `route-architecture.md`).  [deps: none — auth infra already exists from
+- [x] E1. `/landlord/login` (`web/app/landlord/login/page.tsx`) + middleware
+      role gate (`web/middleware.ts`, `has_role('landlord')`, redirect not
+      403 on mismatch). `lib/api/client.ts`'s `redirectToLogin` made
+      surface-aware (a `/landlord/*` 401 bounces to `/landlord/login`, not
+      `/app/login`).  [deps: none — auth infra already exists from
       Product 1's A2]
-- [ ] E2. `/landlord` — My Venues: flat list where `landlord_id = auth.uid()`,
-      status badges, "Add venue" entry point (Path B — `venues_landlord_insert_own`
-      policy already exists, no new backend logic, just wiring the existing
-      `POST /venues` endpoint to a landlord-authenticated caller).  [E1]
-- [ ] E3. `/landlord/venues/[id]` — edit description, address, district,
-      amenities, media, configurations, availability, restrictions. Reuses
-      Product 1's existing venue CRUD endpoints end-to-end (`venues.py`,
-      `venue_media.py`) — RLS already scopes these correctly to
-      `landlord_id = auth.uid()`, no new API surface.  [E2]
+- [x] E2. `/landlord` — My Venues: flat list via `GET /venues` (RLS
+      auto-scopes to `landlord_id = auth.uid()`), status badges, "Add venue"
+      inline form (Path B — sets `landlord_id`/`status='pending_approval'`
+      client-side, RLS's `venues_landlord_insert_own` is the real
+      enforcement).  [E1]
+- [x] E3. `/landlord/venues/[id]` — edit description/address/district, view
+      configurations + restrictions, embeds the D4 pricing tab. Reuses
+      Product 1's existing venue CRUD endpoints end-to-end (`venues.py`) —
+      RLS already scopes these correctly, no new API surface. **Partial:**
+      media gallery upload and the availability calendar are NOT built on
+      this page yet — deliberately deferred (noted, not silently skipped)
+      as the lower-value remainder of this task; configurations/
+      restrictions are read-only lists here (add/edit reuses the same
+      endpoints but no UI for it yet either).  [E2]
+      — Same typecheck caveat as C3/D4/D5.
 
 ## F. Verification
 - [ ] F1. Cross-tenant denial tests: landlord A cannot see landlord B's venues,

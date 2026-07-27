@@ -79,6 +79,11 @@ export interface VenueCreate {
   room_count?: number | null;
   access_note?: string | null;
   view_note?: string | null;
+  // Task E2 (landlord self-add, prd.md §4 Path B): a landlord creating
+  // their own venue must set this to their own auth.uid() and status to
+  // 'pending_approval' — RLS's venues_landlord_insert_own WITH CHECK
+  // enforces both, this field just lets the frontend send it.
+  landlord_id?: string | null;
   status?: VenueStatus;
 }
 
@@ -696,6 +701,70 @@ export interface PricingRuleCreate {
 }
 
 export type AddonPricingType = "flat" | "per_head" | "per_hour";
+
+// --- Product 3: Landlord Portal (erd.md §6a) ----------------------------
+
+export interface Currency {
+  code: string;
+  symbol: string;
+  name: string;
+}
+
+export type LandlordInviteStatus = "pending" | "accepted" | "expired";
+
+export interface LandlordInvite {
+  id: string;
+  email: string;
+  invited_by: string;
+  status: LandlordInviteStatus;
+  invited_at: string;
+  accepted_at: string | null;
+}
+
+export interface LandlordInviteCreate {
+  email: string;
+}
+
+export type PaymentAccountStatus = "pending_verification" | "verified";
+
+export interface LandlordPaymentAccount {
+  id: string;
+  landlord_id: string;
+  bank_name: string | null;
+  account_holder_name: string | null;
+  account_number: string | null;
+  swift_bic: string | null;
+  currency: string;
+  status: PaymentAccountStatus;
+}
+
+export interface LandlordPaymentAccountUpsert {
+  bank_name?: string | null;
+  account_holder_name?: string | null;
+  account_number?: string | null;
+  swift_bic?: string | null;
+  currency: string;
+}
+
+export type PricingChangeRequestStatus = "pending" | "approved" | "rejected";
+
+export interface PricingRuleChangeRequest {
+  id: string;
+  venue_id: string;
+  pricing_rules_id: string | null;
+  proposed_by: string;
+  payload: PricingRuleCreate;
+  status: PricingChangeRequestStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  created_at: string;
+}
+
+export interface PricingRuleChangeRequestCreate {
+  pricing_rules_id?: string | null;
+  payload: PricingRuleCreate;
+}
 
 export interface PricingRuleAddon {
   id: string;

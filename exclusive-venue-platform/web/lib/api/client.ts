@@ -48,12 +48,16 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
 }
 
 /** Bounce to login (preserving where we were) rather than surfacing a
- * confusing inline "invalid session" when the token is gone/expired. */
+ * confusing inline "invalid session" when the token is gone/expired.
+ * Surface-aware (task E1): a /landlord/* page bounces to /landlord/login,
+ * not /app/login — the two roles' sessions/logins are entirely separate. */
 function redirectToLogin(): void {
   if (typeof window === "undefined") return;
-  if (window.location.pathname.startsWith("/app/login")) return;
-  const redirect = encodeURIComponent(window.location.pathname + window.location.search);
-  window.location.href = `/app/login?redirect=${redirect}`;
+  const { pathname } = window.location;
+  if (pathname.startsWith("/app/login") || pathname.startsWith("/landlord/login")) return;
+  const loginPath = pathname.startsWith("/landlord") ? "/landlord/login" : "/app/login";
+  const redirect = encodeURIComponent(pathname + window.location.search);
+  window.location.href = `${loginPath}?redirect=${redirect}`;
 }
 
 /**

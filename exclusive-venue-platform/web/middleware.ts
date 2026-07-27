@@ -37,6 +37,7 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isStaffRoute = pathname.startsWith("/app") && pathname !== "/app/login";
+  const isLandlordRoute = pathname.startsWith("/landlord") && pathname !== "/landlord/login";
 
   if (isStaffRoute && !user) {
     const loginUrl = new URL("/app/login", request.url);
@@ -56,9 +57,30 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // Task E1: /landlord/* requires has_role('landlord'). Redirect (not a
+  // 403 page) on mismatch — same "don't leak route existence" rule as
+  // /app/*, per route-architecture.md.
+  if (isLandlordRoute && !user) {
+    const loginUrl = new URL("/landlord/login", request.url);
+    loginUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  if (isLandlordRoute && user) {
+    const { data: roles } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .eq("role", "landlord");
+
+    if (!roles || roles.length === 0) {
+      return NextResponse.redirect(new URL("/landlord/login", request.url));
+    }
+  }
+
   return response;
 }
 
 export const config = {
-  matcher: ["/app/:path*"],
+  matcher: ["/app/:path*", "/landlord/:path*"],
 };
