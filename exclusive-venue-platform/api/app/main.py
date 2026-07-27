@@ -16,9 +16,13 @@ from app.core.logging_config import configure_logging
 from app.routers import (
     briefs,
     contacts_directory,
+    currencies,
     dashboard,
     enquiries,
+    landlord_invites,
+    landlord_payment_accounts,
     pricing,
+    pricing_rule_change_requests,
     proposals,
     public_proposals,
     recommendations,
@@ -72,6 +76,10 @@ app.include_router(public_proposals.router)
 app.include_router(webhooks.router)
 app.include_router(staff.router)
 app.include_router(dashboard.router)
+app.include_router(currencies.router)
+app.include_router(landlord_invites.router)
+app.include_router(landlord_payment_accounts.router)
+app.include_router(pricing_rule_change_requests.router)
 
 
 @app.get("/health")
